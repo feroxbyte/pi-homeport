@@ -71,8 +71,16 @@ can change them until pi-homeport catches up. To keep pi's own look, leave it ou
 Long commands run in the background (based on
 [pi-background](https://github.com/pringled/pi-extensions/tree/main/packages/pi-background)): the
 model starts them with `bg_run`, a shell command still running after 2 minutes moves there on its
-own, ctrl+b moves one sooner, and `/bg` shows a job's output. Don't install pi-background next to
-pi-homeport.
+own, ctrl+b moves one sooner, and `/bg` shows a job's output. The model keeps a todo list you can
+see above the input (based on
+[rpiv-todo](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo)); `/todos` lists
+it. Don't install those packages next to pi-homeport.
+
+pi-homeport draws the tools of these packages the same way, and works well with them:
+[pi-subagents](https://www.npmjs.com/package/pi-subagents) for subagents,
+[pi-web-access](https://www.npmjs.com/package/pi-web-access) for web search and fetching, and
+[rpiv-ask-user-question](https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question) for
+questions to you.
 
 Not supported, because pi can't do it: SSE and WebSocket MCP servers, MCP prompts as commands,
 plugin options Claude keeps in your system's credential store, argument hints, Claude Code's
@@ -99,7 +107,10 @@ if it's there. If you also use pi-code, turn off the extensions that do the same
     "!extensions/memory.ts",
     "!extensions/claude-rules.ts",
     "!extensions/context-imports.ts",
-    "!extensions/commands.ts"
+    "!extensions/commands.ts",
+    "!extensions/status-line.ts",
+    "!extensions/plugins.ts",
+    "!extensions/todo.ts"
   ]
 }
 ```
