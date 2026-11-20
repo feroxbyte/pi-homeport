@@ -22,6 +22,7 @@ describe("chat tool rows", () => {
 		assert.equal(label("web_search", { queries: ["a", "b"] }), 'Web Search("a", "b")');
 		assert.equal(label("fetch_content", { url: "https://svelte.dev/docs" }), "Fetch(https://svelte.dev/docs)");
 		assert.equal(label("fetch_content", { urls: ["https://a", "https://b"] }), "Fetch(2 URLs)");
+		assert.equal(label("web_fetch", { url: "https://svelte.dev/docs", prompt: "x" }), "Fetch(https://svelte.dev/docs)");
 	});
 
 	it("sums up a finished call in one line", () => {

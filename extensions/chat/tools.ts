@@ -66,6 +66,7 @@ export function callLabel(toolName: string, args: any, cwd: string): { name: str
 			const queries: unknown[] = Array.isArray(args?.queries) ? args.queries : [args?.query];
 			return { name: "Web Search", argument: queries.filter(Boolean).map(quote).join(", ") };
 		}
+		case "web_fetch":
 		case "fetch_content": {
 			const urls: unknown[] = Array.isArray(args?.urls) ? args.urls : [args?.url];
 			return { name: "Fetch", argument: urls.length === 1 ? String(urls[0] ?? "") : plural(urls.length, "URL") };
@@ -150,6 +151,7 @@ export function resultSummary(toolName: string, text: string): string {
 			return lines.length === 0 || /^no files/i.test(lines[0] ?? "") ? "No files found" : `Found ${plural(lines.length, "file")}`;
 		case "ls":
 			return `Listed ${plural(lines.length, "path")}`;
+		case "web_fetch":
 		case "fetch_content": {
 			const kb = Buffer.byteLength(text, "utf8") / 1024;
 			return `Received ${kb < 10 ? kb.toFixed(1) : Math.round(kb)}KB`;
@@ -383,7 +385,7 @@ export default function chatTools(pi: ExtensionAPI) {
 		},
 	});
 
-	const OWN = new Set(["bash", "read", "grep", "find", "ls", "tool_search", "codemode", "web_search", "fetch_content", "get_search_content"]);
+	const OWN = new Set(["bash", "read", "grep", "find", "ls", "tool_search", "codemode", "web_search", "web_fetch", "fetch_content", "get_search_content"]);
 	const edit = fileTool("edit");
 	const write = fileTool("write");
 	// Only the drawing changes: the tools run as before, with their own schema and on/off state.

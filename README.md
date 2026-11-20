@@ -84,9 +84,19 @@ the VS Code one. You count as away when the terminal reports it lost focus, or c
 all; pressing Esc never notifies. Leave it out with `"!extensions/notify/**"`, and don't install
 pi-notify next to it.
 
+`web_search` and `web_fetch` need no API key (based on the web extension of
+[pi-code](https://github.com/ilovepixelart/pi-code)). Search reads DuckDuckGo's results page, with
+allowed and blocked domains. Fetch works as Claude Code's WebFetch does: http becomes https, a
+redirect to another host is reported instead of followed, private and local addresses are refused,
+HTML becomes Markdown, each page is cached for 15 minutes (`CLAUDE_CODE_WEBFETCH_CACHE_TTL_MS`), and
+a `prompt` makes the current model answer from the page. Because DuckDuckGo can limit or change its
+page, a failed search says so and the model can fetch a known URL instead. Leave it out with
+`"!extensions/web/**"`, for example to use [pi-web-access](https://www.npmjs.com/package/pi-web-access)
+and its paid search providers.
+
 pi-homeport draws the tools of these packages the same way, and works well with them:
 [pi-subagents](https://www.npmjs.com/package/pi-subagents) for subagents,
-[pi-web-access](https://www.npmjs.com/package/pi-web-access) for web search and fetching, and
+[pi-web-access](https://www.npmjs.com/package/pi-web-access) for more search providers, and
 [rpiv-ask-user-question](https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question) for
 questions to you.
 
@@ -119,7 +129,8 @@ if it's there. If you also use pi-code, turn off the extensions that do the same
     "!extensions/status-line.ts",
     "!extensions/plugins.ts",
     "!extensions/todo.ts",
-    "!extensions/notify.ts"
+    "!extensions/notify.ts",
+    "!extensions/web.ts"
   ]
 }
 ```
