@@ -1,7 +1,6 @@
 {
   "name": "pi-homeport",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Use your Claude Code setup (MCP servers, skills, agents) in pi.",
   "keywords": [
     "pi-package"
@@ -15,12 +14,6 @@
   "pi": {
     "extensions": [
       "./extensions"
-    ],
-    "skills": [
-      "./skills"
-    ],
-    "prompts": [
-      "./prompts"
     ]
   },
   "peerDependencies": {
@@ -37,5 +30,21 @@
   "author": "Batuhan Demir",
   "dependencies": {
     "yaml": "2.9.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/feroxbyte/pi-homeport.git"
+  },
+  "homepage": "https://github.com/feroxbyte/pi-homeport#readme",
+  "bugs": {
+    "url": "https://github.com/feroxbyte/pi-homeport/issues"
+  },
+  "files": [
+    "extensions",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.18"
   }
 }

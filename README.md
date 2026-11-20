@@ -31,24 +31,29 @@ plugin options Claude keeps in your system's credential store, argument hints, a
 built-in skills. Skills with `context: fork` or `hooks` load, but those fields wait for agents and
 hooks support.
 
-## Layout
+## Install
 
-- `extensions/`: pi extensions (TypeScript, loaded by pi without a build step)
-- `skills/`: skills, one folder per skill with a `SKILL.md`
-- `prompts/`: prompt templates
+```sh
+pi install npm:pi-homeport
+```
 
-## Use
+pi's built-in MCP must be on: remove `"-builtin:mcp"` from `extensions` in `~/.pi/agent/settings.json`
+if it's there. If you also use pi-code, turn off its MCP and skills extensions so the two don't load
+the same servers and skills twice:
+
+```json
+{ "source": "npm:pi-code", "extensions": ["!extensions/mcp/**", "!extensions/skills.ts"] }
+```
+
+Remote MCP servers that sign in with OAuth need one sign-in in pi: `/mcp login <server>`.
+
+## Develop
 
 ```sh
 pnpm install
-pi install ~/Projects/pi-homeport
-```
-
-Try a change for one run without installing: `pi -e ~/Projects/pi-homeport`.
-
-## Check
-
-```sh
 pnpm check
 pnpm test
+pi -e .   # try the working copy for one run
 ```
+
+Extensions live in `extensions/` as TypeScript that pi loads without a build step.
