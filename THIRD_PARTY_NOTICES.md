@@ -143,8 +143,8 @@ SOFTWARE.
 ## pi-code
 
 `extensions/web`, `extensions/monitor`, `extensions/rewind`, `extensions/plan`, `extensions/goal`,
-`extensions/context` and `extensions/title` are based on the web, monitor, git-checkpoint,
-plan-mode, goal, context-usage and session-title extensions of
+`extensions/context`, `extensions/title` and `extensions/init` are based on the web, monitor,
+git-checkpoint, plan-mode, goal, context-usage, session-title and init extensions of
 [pi-code](https://github.com/ilovepixelart/pi-code). Its plan mode came from pi's plan-mode example
 by Mario Zechner.
 

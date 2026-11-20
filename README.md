@@ -156,6 +156,12 @@ name you set with `--name` or `/name` wins. The model `ANTHROPIC_DEFAULT_HAIKU_M
 title when pi has it, the session's model otherwise; print runs get none, and
 `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` turns titles off. Leave it out with `"!extensions/title/**"`.
 
+`/init` has the model study the project and write a CLAUDE.md for it, as Claude Code's `/init` does
+(based on the init extension of pi-code): build and test commands, the architecture and the
+conventions, with Cursor and Copilot rules folded in. A CLAUDE.md that exists is improved rather than
+replaced, and a project that relies on AGENTS.md keeps it through an `@AGENTS.md` import. Leave it
+out with `"!extensions/init/**"`.
+
 pi-homeport draws the tools of these packages the same way, and works well with them:
 [pi-subagents](https://www.npmjs.com/package/pi-subagents) for subagents,
 [pi-web-access](https://www.npmjs.com/package/pi-web-access) for more search providers, and
@@ -200,7 +206,8 @@ if it's there. If you also use pi-code, turn off the extensions that do the same
     "!extensions/plan-mode/**",
     "!extensions/goal.ts",
     "!extensions/context-usage.ts",
-    "!extensions/session-title.ts"
+    "!extensions/session-title.ts",
+    "!extensions/init.ts"
   ]
 }
 ```
