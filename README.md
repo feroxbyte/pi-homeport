@@ -82,3 +82,12 @@ pi -e .   # try the working copy for one run
 ```
 
 Extensions live in `extensions/` as TypeScript that pi loads without a build step.
+
+## Release
+
+Releases publish from GitHub Actions through npm's trusted publishing, without an npm token:
+
+1. Set the new version in `package.json` and commit it.
+2. Tag the commit `v<version>` and push the tag. The Release workflow checks, tests and stages the
+   package on npm.
+3. Approve the staged version on npmjs.com (Staged Packages) or with `npm stage approve`.
