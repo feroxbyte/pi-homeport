@@ -5,7 +5,8 @@
  * - the git branch, `*` for uncommitted changes, and `↑2 ↓1` for commits ahead of or behind the
  *   upstream as of the last fetch;
  * - a context bar with a mark where auto-compaction starts;
- * - the prompt cache hit rate of the last response, and the session's cost;
+ * - the prompt cache hit rate of the last response, how long until the cache expires (`· 47m`, then
+ *   `cold`), and the session's cost;
  * - `● working 12s · ~48 tok/s` during a turn, `○ ready · 1.2k out · 52 tok/s` after it.
  *
  * Statuses other extensions set follow when there's room. When the window is narrow, the context
@@ -19,6 +20,7 @@ import * as path from "node:path";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
+	cacheLeft,
 	compactionPoint,
 	formatElapsed,
 	formatTokens,
@@ -68,6 +70,8 @@ export default function footerExtension(pi: ExtensionAPI) {
 	let gitRunning = false;
 	let gitTimer: ReturnType<typeof setInterval> | undefined;
 	let clock: ReturnType<typeof setInterval> | undefined;
+	/** Redraws now and then while idle, so the cache countdown moves. */
+	let idleTicker: ReturnType<typeof setInterval> | undefined;
 	/** Where the running turn started in the session branch, to count its output tokens. */
 	let turnStart = 0;
 	/** The streaming message: when its first delta came, and the characters so far. */
@@ -148,6 +152,7 @@ export default function footerExtension(pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
 		if (gitTimer) clearInterval(gitTimer);
 		if (clock) clearInterval(clock);
+		if (idleTicker) clearInterval(idleTicker);
 	});
 
 	function readCompaction(ctx: ExtensionContext) {
@@ -164,6 +169,10 @@ export default function footerExtension(pi: ExtensionAPI) {
 		refreshGit(ctx.cwd);
 		if (gitTimer) clearInterval(gitTimer);
 		gitTimer = setInterval(() => refreshGit(ctx.cwd), GIT_REFRESH_MS);
+		if (idleTicker) clearInterval(idleTicker);
+		idleTicker = setInterval(() => {
+			if (state.turn.state === "ready") requestRender();
+		}, 5_000);
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			requestRender = () => tui.requestRender();
 			const unsubscribe = footerData.onBranchChange(() => {
@@ -186,7 +195,11 @@ type FooterData = Parameters<Parameters<ExtensionContext["ui"]["setFooter"]>[0] 
 
 function renderFooter(ctx: ExtensionContext, pi: ExtensionAPI, theme: Theme, footerData: FooterData, state: State, width: number): string {
 	const now = Date.now();
-	const { cost, cacheRate } = usageTotals(ctx.sessionManager.getBranch());
+	const { cost, cacheRate, lastAt } = usageTotals(ctx.sessionManager.getBranch());
+	// The cache's lifetime for the retention pi asks for (PI_CACHE_RETENTION=long for the one-hour cache); while a turn runs it's in use.
+	const promptCache = (ctx.model as { promptCache?: { short?: number; long?: number } } | undefined)?.promptCache;
+	const ttl = promptCache?.[process.env.PI_CACHE_RETENTION === "long" ? "long" : "short"];
+	const left = state.turn.state === "ready" ? cacheLeft(lastAt, ttl, now) : undefined;
 
 	const usage = ctx.getContextUsage();
 	const used = usage?.tokens ?? 0;
@@ -242,7 +255,11 @@ function renderFooter(ctx: ExtensionContext, pi: ExtensionAPI, theme: Theme, foo
 				theme.fg("muted", "] ") +
 				theme.fg("mdCode", `${formatTokens(used)}/${formatTokens(contextWindow)}`) +
 				theme.fg(barColor, ` (${percent.toFixed(0)}%)`),
-			cacheRate === undefined || dropped.has("cache") ? "" : theme.fg("muted", "cache ") + theme.fg(cacheColor, `${cacheRate.toFixed(0)}%`),
+			cacheRate === undefined || dropped.has("cache")
+				? ""
+				: left === "cold"
+					? theme.fg("muted", "cache ") + theme.fg("warning", "cold")
+					: theme.fg("muted", "cache ") + theme.fg(cacheColor, `${cacheRate.toFixed(0)}%`) + (left ? theme.fg("dim", ` · ${left}`) : ""),
 			(free && cost === 0) || dropped.has("cost") ? "" : theme.fg("success", `$${cost.toFixed(3)}`),
 			turn(!dropped.has("turn details")),
 		]

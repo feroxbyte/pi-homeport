@@ -48,7 +48,7 @@ It also replaces pi's footer with one line:
 - the project, the model and effort, and the git branch with uncommitted changes (`*`) and commits
   ahead or behind (`↑2 ↓1`);
 - a context bar with a mark (`┊`) where auto-compaction starts;
-- the prompt cache hit rate of the last response, and the session's cost;
+- the prompt cache hit rate of the last response, how long the cache has left, and the session's cost;
 - `● working 12s · ~70 tok/s` during a turn, and `○ ready · 332 out · 94 tok/s` after it.
 
 Statuses from other extensions follow when there's room. It's based on

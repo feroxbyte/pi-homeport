@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { compactionPoint, formatElapsed, formatTokens, outputTokensSince, parseGitStatus, usageTotals } from "../extensions/footer/parts.ts";
+import { cacheLeft, compactionPoint, formatElapsed, formatTokens, outputTokensSince, parseGitStatus, usageTotals } from "../extensions/footer/parts.ts";
 
 describe("footer", () => {
 	it("reads branch, changes and ahead/behind from git status", () => {
@@ -44,5 +44,14 @@ describe("footer", () => {
 	it("counts the output tokens of the running turn", () => {
 		const reply = (output: number) => ({ type: "message", message: { role: "assistant", usage: { output } } });
 		assert.equal(outputTokensSince([reply(500), { type: "message", message: { role: "user" } }, reply(120), reply(80)], 1), 200);
+	});
+
+	it("counts down the prompt cache from the last response", () => {
+		const now = 1_000_000_000;
+		assert.equal(cacheLeft(now - 13 * 60_000, 3600, now), "47m");
+		assert.equal(cacheLeft(now - 260_000, 300, now), "40s");
+		assert.equal(cacheLeft(now - 301_000, 300, now), "cold");
+		assert.equal(cacheLeft(undefined, 300, now), undefined);
+		assert.equal(usageTotals([{ type: "message", message: { role: "assistant", usage: { input: 1 }, timestamp: 42 } }]).lastAt, 42);
 	});
 });

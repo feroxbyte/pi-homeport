@@ -51,18 +51,29 @@ interface UsageLike {
  * The session's cost so far, and the share of the last response's input that came from the prompt
  * cache. Tokens written to the cache count as misses: they were sent in full.
  */
-export function usageTotals(entries: readonly unknown[]): { cost: number; cacheRate: number | undefined } {
+export function usageTotals(entries: readonly unknown[]): { cost: number; cacheRate: number | undefined; lastAt: number | undefined } {
 	let cost = 0;
 	let last: UsageLike | undefined;
+	let lastAt: number | undefined;
 	for (const entry of entries) {
-		const message = (entry as { type?: string; message?: { role?: string; usage?: UsageLike } }).message;
+		const message = (entry as { type?: string; message?: { role?: string; usage?: UsageLike; timestamp?: number } }).message;
 		if ((entry as { type?: string }).type !== "message" || message?.role !== "assistant" || !message.usage) continue;
 		cost += message.usage.cost?.total ?? 0;
 		last = message.usage;
+		lastAt = typeof message.timestamp === "number" ? message.timestamp : lastAt;
 	}
 	const read = last?.cacheRead ?? 0;
 	const total = (last?.input ?? 0) + read + (last?.cacheWrite ?? 0);
-	return { cost, cacheRate: total > 0 ? (read / total) * 100 : undefined };
+	return { cost, cacheRate: total > 0 ? (read / total) * 100 : undefined, lastAt };
+}
+
+/** How long the prompt cache lasts from the last request, or undefined when it's unknown: `47m`,
+ * `40s`, or `cold` once it has expired. */
+export function cacheLeft(lastAt: number | undefined, ttlSeconds: number | undefined, now: number = Date.now()): string | undefined {
+	if (lastAt === undefined || !ttlSeconds) return undefined;
+	const left = lastAt + ttlSeconds * 1000 - now;
+	if (left <= 0) return "cold";
+	return left >= 60_000 ? `${Math.floor(left / 60_000)}m` : `${Math.ceil(left / 1000)}s`;
 }
 
 /** Where auto-compaction starts, as a share of the context window, or undefined when it's off. */
