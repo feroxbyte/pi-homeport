@@ -122,6 +122,27 @@ page, a failed search says so and the model can fetch a known URL instead. Leave
 `"!extensions/web/**"`, for example to use [pi-web-access](https://www.npmjs.com/package/pi-web-access)
 and its paid search providers.
 
+Plan mode works as in Claude Code (based on the plan-mode extension of
+[pi-code](https://github.com/ilovepixelart/pi-code)): `/plan` turns it on, `/plan fix the auth bug`
+also starts that task, and ctrl+alt+p turns it on or off (Shift+Tab is pi's thinking-level key, which
+extensions can't take). `pi --plan` starts in plan mode, and so does `"defaultMode": "plan"` in
+Claude's `permissions`. While planning, the model sees only read-only tools: edits are blocked,
+Claude's read-only shell commands run, and anything else asks you first. When the plan is ready the
+model presents it, and you start, edit the plan first, or keep planning and say what to change;
+starting turns plan mode off and the model gets to work in the same turn. Leave it out with
+`"!extensions/plan/**"`.
+
+`/goal all tests in test/auth pass` keeps pi working until the condition holds (based on the goal
+extension of pi-code). After each turn a separate check on the current model (or
+`ANTHROPIC_DEFAULT_HAIKU_MODEL`, when pi has that model) reads the conversation and says whether the
+goal is met; if not, its reason starts the next turn. `/goal` shows how it's going, `/goal clear`
+stops it, and the footer shows `◎ /goal active`. As in Claude, a goal pauses after 8 turns in a row
+without a tool call (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`), clears on an error you have to fix, retries
+or pauses on others, waits while a pi-subagents run or a background command is still going (with a
+check-in after `CLAUDE_CODE_GOAL_CHECKIN_MINUTES`), survives a resume, and is unavailable when
+Claude's `disableAllHooks` or `allowManagedHooksOnly` is set. `pi -p "/goal ..."` runs until the goal
+resolves. Leave it out with `"!extensions/goal/**"`.
+
 pi-homeport draws the tools of these packages the same way, and works well with them:
 [pi-subagents](https://www.npmjs.com/package/pi-subagents) for subagents,
 [pi-web-access](https://www.npmjs.com/package/pi-web-access) for more search providers, and
@@ -162,7 +183,9 @@ if it's there. If you also use pi-code, turn off the extensions that do the same
     "!extensions/web.ts",
     "!extensions/background-bash.ts",
     "!extensions/monitor.ts",
-    "!extensions/git-checkpoint.ts"
+    "!extensions/git-checkpoint.ts",
+    "!extensions/plan-mode/**",
+    "!extensions/goal.ts"
   ]
 }
 ```
