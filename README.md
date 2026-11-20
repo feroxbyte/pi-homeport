@@ -75,7 +75,18 @@ own, and ctrl+b moves one sooner. While jobs run, the line under a turn adds `2 
 ↓ to manage`: press ↓ in an empty input (or type `/bg`) for the list, ↑ ↓ to select, enter to open
 a job's output, `x` to stop it, and esc to go back. In a job, ↑ ↓, page up and down, `g` and `G`
 scroll through its log. A `/reload` leaves running jobs alone and the reloaded session reports on
-them; quitting, `/new`, `/resume` and `/fork` stop them. The model keeps a todo list you can
+them; quitting, `/new`, `/resume` and `/fork` stop them.
+
+The model can also watch something while you keep working, as Claude Code's Monitor does (based on
+the monitor extension of [pi-code](https://github.com/ilovepixelart/pi-code)): `monitor` runs a
+command in the background and each line it prints arrives as an event, so it can tail a log, follow
+a CI run or react to file changes. A watch ends after 5 minutes unless the model asks for more (at
+most 30) and says so once; lines that arrive together come as one event, and a command that prints
+too fast is throttled and then stopped. Monitors show in the jobs line and in `/bg` next to
+background jobs, and `task_stop` stops either one (`bg1`, `mon1`). Leave it out with
+`"!extensions/monitor/**"`.
+
+The model keeps a todo list you can
 see above the input (based on
 [rpiv-todo](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo)); `/todos` lists
 it. Don't install those packages next to pi-homeport.
@@ -134,7 +145,9 @@ if it's there. If you also use pi-code, turn off the extensions that do the same
     "!extensions/plugins.ts",
     "!extensions/todo.ts",
     "!extensions/notify.ts",
-    "!extensions/web.ts"
+    "!extensions/web.ts",
+    "!extensions/background-bash.ts",
+    "!extensions/monitor.ts"
   ]
 }
 ```

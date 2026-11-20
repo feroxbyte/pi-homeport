@@ -77,6 +77,10 @@ export function callLabel(toolName: string, args: any, cwd: string): { name: str
 			return { name: "Update", argument: shortPath(args?.path, cwd) };
 		case "write":
 			return { name: "Write", argument: shortPath(args?.path, cwd) };
+		case "monitor":
+			return { name: "Monitor", argument: String(args?.description ?? args?.command ?? "").split("\n")[0] ?? "" };
+		case "task_stop":
+			return { name: "Stop Task", argument: String(args?.task_id ?? args?.shell_id ?? "") };
 		default: {
 			if (toolName.startsWith("mcp__")) {
 				const [, server, ...tool] = toolName.split("__");
@@ -419,8 +423,10 @@ export default function chatTools(pi: ExtensionAPI) {
 			return plainTool(toolName);
 		}
 		const own = next();
+		// A tool with no drawing of its own, like pi-code's monitor, would get pi's colored box: draw it as a row.
+		if (!own) return otherTool(toolName, {});
 		// Tools that draw their own frame, like bg_run, already fit in.
-		return own && own.renderShell !== "self" ? otherTool(toolName, own) : own;
+		return own.renderShell !== "self" ? otherTool(toolName, own) : own;
 	});
 
 	// pi only lists a tool's guidelines while the tool is on.

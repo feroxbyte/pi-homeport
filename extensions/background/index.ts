@@ -41,7 +41,7 @@ const HINT_AFTER_MS = 3000;
 // How long finished results wait for jobs started alongside them before Pi is woken anyway
 const GROUP_HOLD_MS = 2 * 60_000;
 
-interface Job {
+export interface Job {
 	id: string;
 	command: string;
 	log: string;
@@ -199,7 +199,7 @@ interface Shared {
 
 const REGISTRY = Symbol.for("pi-homeport.background.registry");
 
-function shared(): Shared {
+export function shared(): Shared {
 	const holder = globalThis as Record<symbol, Shared | undefined>;
 	return (holder[REGISTRY] ??= { jobs: new Map(), next: 1, turn: 0, unreported: [] });
 }

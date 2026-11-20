@@ -142,7 +142,7 @@ SOFTWARE.
 
 ## pi-code
 
-`extensions/web` is based on the web extension of
+`extensions/web` and `extensions/monitor` are based on the web and monitor extensions of
 [pi-code](https://github.com/ilovepixelart/pi-code).
 
 ```text

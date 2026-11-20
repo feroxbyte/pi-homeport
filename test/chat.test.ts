@@ -23,6 +23,9 @@ describe("chat tool rows", () => {
 		assert.equal(label("fetch_content", { url: "https://svelte.dev/docs" }), "Fetch(https://svelte.dev/docs)");
 		assert.equal(label("fetch_content", { urls: ["https://a", "https://b"] }), "Fetch(2 URLs)");
 		assert.equal(label("web_fetch", { url: "https://svelte.dev/docs", prompt: "x" }), "Fetch(https://svelte.dev/docs)");
+		assert.equal(label("monitor", { description: "CI status", command: "gh run watch" }), "Monitor(CI status)");
+		assert.equal(label("monitor", { command: "tail -F app.log\nx" }), "Monitor(tail -F app.log)");
+		assert.equal(label("task_stop", { task_id: "b9ba58526" }), "Stop Task(b9ba58526)");
 	});
 
 	it("sums up a finished call in one line", () => {
