@@ -76,6 +76,14 @@ see above the input (based on
 [rpiv-todo](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo)); `/todos` lists
 it. Don't install those packages next to pi-homeport.
 
+When pi finishes and waits for you while you're away from the terminal, it notifies you as Claude
+Code does (based on [pi-notify](https://github.com/ferologics/pi-notify)), following Claude's
+`preferredNotifChannel`: by default a desktop notification in iTerm2, Kitty, Ghostty, WezTerm and
+Windows Terminal, and nothing elsewhere; `"terminal_bell"` rings the bell in any terminal, such as
+the VS Code one. You count as away when the terminal reports it lost focus, or can't report focus at
+all; pressing Esc never notifies. Leave it out with `"!extensions/notify/**"`, and don't install
+pi-notify next to it.
+
 pi-homeport draws the tools of these packages the same way, and works well with them:
 [pi-subagents](https://www.npmjs.com/package/pi-subagents) for subagents,
 [pi-web-access](https://www.npmjs.com/package/pi-web-access) for web search and fetching, and
@@ -110,7 +118,8 @@ if it's there. If you also use pi-code, turn off the extensions that do the same
     "!extensions/commands.ts",
     "!extensions/status-line.ts",
     "!extensions/plugins.ts",
-    "!extensions/todo.ts"
+    "!extensions/todo.ts",
+    "!extensions/notify.ts"
   ]
 }
 ```
