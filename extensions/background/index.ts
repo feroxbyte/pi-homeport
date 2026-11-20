@@ -21,9 +21,12 @@ import {
 import { Key, matchesKey, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { shortCommand } from "./command.ts";
+import { moved, readTail, scrolled, windowOf } from "./view.ts";
 
 const TAIL_LINES = 20;
 const TAIL_BYTES = 64 * 1024;
+// How much of a log the job screen can scroll back through
+const VIEW_BYTES = 512 * 1024;
 // A bash command still running after this long moves to the background, so it no longer blocks the turn
 const AUTO_BACKGROUND_SECS = 120;
 const WAKE_DEBOUNCE_MS = 1000;
@@ -135,7 +138,8 @@ async function throughBash(ctx: ExtensionToolContext, command: string, signal: A
 			closeSync(fd);
 		}
 	};
-	const outcome = await ctx.executeTool("bash", { command }, {
+	// A day, so a bash that backgrounds commands at its timeout leaves this one running
+	const outcome = await ctx.executeTool("bash", { command, timeout: 24 * 60 * 60 }, {
 		signal,
 		onUpdate: (partial) => {
 			full ??= (partial.details as any)?.fullOutputPath;
@@ -155,6 +159,11 @@ async function throughBash(ctx: ExtensionToolContext, command: string, signal: A
 	const text = outcome.result.content.map((c: any) => c.text ?? "").join("");
 	const code = (outcome.result.structuredContent as any)?.exit_code ?? /Command exited with code (\d+)$/.exec(text)?.[1];
 	if (code !== undefined) return { exitCode: Number(code) };
+	// A bash that backgrounds long commands itself (pi-code's does after two minutes) answers with a note, not an exit
+	// code. Reporting that as "exited 0" would tell Pi a job that is still running had succeeded.
+	if (/moved to the background|moved to background/i.test(text)) {
+		throw new Error(`the bash tool moved this command to a background job of its own, which bg_run can't follow: ${text.split("\n")[0]}`);
+	}
 	if (outcome.isError) throw new Error(text.trimEnd().split("\n").at(-1) || "bash failed");
 	return { exitCode: 0 };
 }
@@ -171,21 +180,56 @@ class MovedToBackground extends Error {
 	}
 }
 
+type Wake = (content: string, details: { headline: string; last: string; error: boolean }, triggerTurn?: boolean) => void;
+
+/**
+ * What outlives a /reload. pi loads an extension afresh on reload, but the processes it started keep running,
+ * so the jobs, their numbering and who reports on them live here, where the next copy finds them. Without it a
+ * reload would stop every job, or leave it running with nobody to tell pi when it ends.
+ */
+interface Shared {
+	jobs: Map<string, Job>;
+	next: number;
+	turn: number;
+	/** The running copy of the extension. Missing between one copy's shutdown and the next copy's start. */
+	live?: { wake: Wake; redraw(): void; finished(job: Job): void };
+	/** Jobs that ended while no copy was running, for the next one to report. */
+	unreported: Job[];
+}
+
+const REGISTRY = Symbol.for("pi-homeport.background.registry");
+
+function shared(): Shared {
+	const holder = globalThis as Record<symbol, Shared | undefined>;
+	return (holder[REGISTRY] ??= { jobs: new Map(), next: 1, turn: 0, unreported: [] });
+}
+
+/** Hands a job that has ended to whichever copy of the extension is running, or keeps it for the next. */
+function settle(job: Job) {
+	const reg = shared();
+	// A job the session forgot, stopped by a shutdown or ended after it, has nobody to tell. By identity, since a new
+	// session may already have started a job under the same id.
+	if (reg.jobs.get(job.id) !== job) return;
+	if (reg.live) reg.live.finished(job);
+	else reg.unreported.push(job);
+}
+
 export default function backgroundExtension(pi: ExtensionAPI) {
-	const jobs = new Map<string, Job>();
-	let next = 1;
+	const reg = shared();
+	const jobs = reg.jobs;
 
 	// While Pi is working, the message is steered in before its next step instead of following up after the whole run,
 	// which for a long run left results hours late and woke Pi once per stale message when the run ended
-	const wake = (content: string, details: { headline: string; last: string; error: boolean }, triggerTurn = true) =>
+	const deliver: Wake = (content, details, triggerTurn = true) =>
 		pi.sendMessage({ customType: "background-job", content, display: true, details }, { triggerTurn, deliverAs: "steer" });
+	// Through the running copy, since a job started before a reload reports to the one running after it
+	const wake: Wake = (content, details, triggerTurn = true) => reg.live?.wake(content, details, triggerTurn);
 
 	// Jobs started in the same turn usually belong together, like several benchmarks to compare. While some of them
 	// still run, a successful one's result is added to the conversation without waking Pi, so it answers once at the
 	// end instead of after each job. A job that runs on too long doesn't hold the others back for more than GROUP_HOLD_MS.
-	let turn = 0;
 	pi.on("turn_start", async () => {
-		turn++;
+		reg.turn++;
 	});
 	const holds = new Map<number, NodeJS.Timeout>();
 	const runningInGroup = (job: Job) =>
@@ -252,6 +296,12 @@ export default function backgroundExtension(pi: ExtensionAPI) {
 
 	// One line per running job above the input, with its elapsed time and latest output
 	const running = () => [...jobs.values()].filter((job) => job.status === "running");
+	// The chat extension adds "2 background jobs · ↓ to manage" to its turn line from this, without importing us
+	(globalThis as any)[Symbol.for("pi-homeport.background")] = { running: () => running().length };
+	// For telling whether the input has the keyboard focus, so ↓ doesn't open the list over another screen
+	// getFocusedComponent is newer than the pi this builds against; without it ↓ is left alone
+	let tuiRef: object | undefined;
+	let listing = false;
 	// The job open in /bg, left out of the jobs line meanwhile so it isn't shown twice
 	let viewing: Job | undefined;
 	// "full" (the default), "compact" without the output, or "off", set with "background": { "jobs": ... } in pi's settings.json
@@ -285,7 +335,7 @@ export default function backgroundExtension(pi: ExtensionAPI) {
 				lines = live.map((job) => {
 					const silent = silentFor(job);
 					const detail = silent >= SILENT_AFTER_MS ? ` · no output for ${duration(silent)}` : jobsLine() === "full" && job.lastLine ? ` · ${job.lastLine}` : "";
-					const text = theme.fg("accent", "⏵ ") + theme.fg("toolTitle", `${job.id} ${shownCommand(job.command)}`) + theme.fg("dim", ` · ${elapsed(job)}${detail}`);
+					const text = theme.fg("accent", "● ") + theme.fg("toolTitle", `${job.id} ${shownCommand(job.command)}`) + theme.fg("dim", ` · ${elapsed(job)}${detail}`);
 					return truncateToWidth(text, width);
 				});
 			} else {
@@ -293,7 +343,7 @@ export default function backgroundExtension(pi: ExtensionAPI) {
 				// some have gone quiet, since they may be stuck; /bg has the rest
 				const silent = live.filter((job) => silentFor(job) >= SILENT_AFTER_MS).length;
 				const warning = silent ? theme.fg("warning", ` · ${silent} silent for ${SILENT_AFTER_MS / 60_000}m+`) : "";
-				lines = [truncateToWidth(theme.fg("accent", "⏵ ") + theme.fg("toolTitle", `${live.length} jobs`) + warning, width)];
+				lines = [truncateToWidth(theme.fg("accent", "● ") + theme.fg("toolTitle", `${live.length} jobs`) + warning, width)];
 			}
 			if (hinted.size > 0 && !(globalThis as any)[Symbol.for("pi-polish.showsMoveHint")]) lines.push(theme.fg("dim", "  ctrl+b to run in background"));
 			return lines;
@@ -350,12 +400,12 @@ export default function backgroundExtension(pi: ExtensionAPI) {
 		run: (onData: (d: Buffer) => void) => Promise<{ exitCode: number | null }>,
 		earlier?: { started: number; output: Buffer; lastOutput?: number },
 	) => {
-		const id = `bg${next++}`;
+		const id = `bg${reg.next++}`;
 		const dir = join(tmpdir(), "pi-bg");
 		mkdirSync(dir, { recursive: true });
 		const log = join(dir, `${process.pid}-${id}.log`);
 		const out = createWriteStream(log);
-		const job: Job = { id, command, log, started: earlier?.started ?? Date.now(), controller, status: "running", group: turn, watched: Boolean(pattern) };
+		const job: Job = { id, command, log, started: earlier?.started ?? Date.now(), controller, status: "running", group: reg.turn, watched: Boolean(pattern) };
 		jobs.set(id, job);
 
 		const watch = pattern ? watcher(job, pattern) : undefined;
@@ -382,16 +432,8 @@ export default function backgroundExtension(pi: ExtensionAPI) {
 			})
 			.finally(() => {
 				job.ended = Date.now();
-				showJobs();
-				out.end(() => {
-					// A kill from session shutdown has no session left to notify
-					if (job.status === "killed" && !jobs.has(id)) return;
-					report(job, `Background job finished: ${summary(job)}\nLast lines:\n${tail(log, TAIL_LINES)}`, {
-						headline: `${id} ${job.status === "exited" ? `exited ${job.exitCode}` : job.status} · ${elapsed(job)}`,
-						last: tail(log, 1),
-						error: job.status !== "exited" || job.exitCode !== 0,
-					});
-				});
+				reg.live?.redraw();
+				out.end(() => settle(job));
 			});
 
 		showJobs();
@@ -580,51 +622,92 @@ export default function backgroundExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	// Shows a job's latest output in place of the input until esc, refreshed every second while it runs
-	const showJob = async (args: string, ctx: ExtensionContext) => {
-		if (!ctx.hasUI) return;
+	const statusColor = (job: Job) => (job.status === "running" ? "accent" : job.status === "exited" && job.exitCode === 0 ? "success" : "error");
+	// Running jobs first, then the latest finished ones
+	const listed = () => {
 		const all = [...jobs.values()].reverse();
-		if (all.length === 0) return ctx.ui.notify("No background jobs yet", "info");
-		// "/bg 2" works as well as "/bg bg2"
-		const wanted = args.trim().toLowerCase().replace(/^(\d+)$/, "bg$1");
-		let job = wanted ? jobs.get(wanted) : all.length === 1 ? all[0] : undefined;
-		if (wanted && !job) return ctx.ui.notify(`No background job ${args.trim()}; there's ${[...jobs.keys()].join(", ")}`, "warning");
-		if (!job) {
-			// Running jobs first, then the latest finished ones
-			const listed = [...all.filter((other) => other.status === "running"), ...all.filter((other) => other.status !== "running").slice(0, MAX_LISTED_FINISHED)];
-			// Matched by position, since the elapsed time in a label changes while the list is open
-			// Ids and commands padded to one width, so the states and times line up
-			const idWidth = Math.max(...listed.map((other) => other.id.length));
-			const commandWidth = Math.max(...listed.map((other) => shownCommand(other.command).length));
-			const options = listed.map((other) => `${other.id.padEnd(idWidth)} ${shownCommand(other.command).padEnd(commandWidth)} · ${state(other)} · ${elapsed(other)}`);
-			job = listed[options.indexOf((await ctx.ui.select("Background jobs", options)) ?? "")];
-			if (!job) return;
-		}
-		const shown = job;
+		return [...all.filter((job) => job.status === "running"), ...all.filter((job) => job.status !== "running").slice(0, MAX_LISTED_FINISHED)];
+	};
+
+	// The list of jobs in place of the input: ↑ ↓ select, enter opens one, x stops it, esc closes. The selection is
+	// kept by id, since the order changes as jobs finish while the list is open.
+	const pickJob = (ctx: ExtensionContext, first: string | undefined) =>
+		ctx.ui.custom<Job | undefined>((tui, theme, _kb, done) => {
+			let selected: string | undefined = first ?? listed()[0]?.id;
+			const timer = setInterval(() => tui.requestRender(), 1000);
+			return {
+				dispose: () => clearInterval(timer),
+				invalidate() {},
+				handleInput: (data: string) => {
+					const jobsNow = listed();
+					if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || data === "q") return done(undefined);
+					if (matchesKey(data, Key.enter)) return done(jobs.get(selected ?? ""));
+					if (data === "x") jobs.get(selected ?? "")?.controller.abort();
+					selected = moved(data, jobsNow.map((job) => job.id), selected);
+					tui.requestRender();
+				},
+				render(width: number) {
+					const rows = listed();
+					const idWidth = Math.max(0, ...rows.map((job) => job.id.length));
+					const body = rows.map((job) => {
+						const on = job.id === selected;
+						const text =
+							theme.fg(on ? "accent" : "dim", on ? "❯ " : "  ") +
+							theme.fg(statusColor(job), "● ") +
+							theme.fg(on ? "toolTitle" : "text", `${job.id.padEnd(idWidth)} ${shownCommand(job.command)}`) +
+							theme.fg("dim", ` · ${state(job)} · ${elapsed(job)}`);
+						return truncateToWidth(text, width);
+					});
+					return [
+						theme.fg("borderMuted", "─".repeat(width)),
+						theme.fg("toolTitle", " Background jobs"),
+						...(body.length ? body : [theme.fg("dim", "  none")]),
+						theme.fg("dim", " ↑↓ select · enter open · x stop · esc close"),
+						theme.fg("borderMuted", "─".repeat(width)),
+					].map((line) => truncateToWidth(line, width));
+				},
+			};
+		});
+
+	// A job's output in place of the input, refreshed every second while it runs and following the end of the log until
+	// you scroll up: ↑ ↓ by a line, page up and down by a screen, g and G to the start and the end, x stops the job.
+	const viewJob = async (ctx: ExtensionContext, shown: Job) => {
 		viewing = shown;
 		const log = shown.log.replace(homedir(), "~");
+		let fromBottom = 0;
 		try {
 			await ctx.ui.custom<void>((tui, theme, _kb, done) => {
 				const timer = setInterval(() => tui.requestRender(), 1000);
+				// At most 60% of the terminal, so the conversation above stays in view
+				const height = () => Math.max(3, Math.floor(tui.terminal.rows * 0.6));
+				const lines = () => {
+					const text = readTail(shown.log, VIEW_BYTES).trimEnd();
+					return text ? text.split("\n").map(cleanLine) : [];
+				};
 				return {
 					dispose: () => clearInterval(timer),
 					invalidate() {},
 					handleInput: (data: string) => {
-						if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || data === "q") done();
+						if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || data === "q") return done();
+						if (data === "x") shown.controller.abort();
+						const all = lines();
+						fromBottom = scrolled(data, fromBottom, height(), all.length) ?? fromBottom;
+						fromBottom = windowOf(all, height(), fromBottom).fromBottom;
+						tui.requestRender();
 					},
 					render(width: number) {
-						const color = shown.status === "running" ? "accent" : shown.status === "exited" && shown.exitCode === 0 ? "success" : "error";
-						const title = theme.fg(color, " ● ") + theme.fg("toolTitle", `${shown.id} ${shownCommand(shown.command)}`);
+						const title = theme.fg(statusColor(shown), " ● ") + theme.fg("toolTitle", `${shown.id} ${shownCommand(shown.command)}`);
 						const status = theme.fg("muted", `${state(shown)} · ${elapsed(shown)} `);
 						const gap = Math.max(1, width - visibleWidth(title) - visibleWidth(status));
-						// At most half the terminal, so the conversation above stays in view
-						const text = tail(shown.log, Math.max(3, Math.min(TAIL_LINES, Math.floor(tui.terminal.rows / 2))));
-						const output = text === "(no output)" ? [theme.fg("dim", theme.italic("   no output yet"))] : text.split("\n").map((line) => `   ${cleanLine(line)}`);
+						const view = windowOf(lines(), height(), fromBottom);
+						const output = view.lines.length ? view.lines.map((line) => `   ${line}`) : [theme.fg("dim", theme.italic("   no output yet"))];
+						const position = view.below > 0 ? ` · ${view.below} lines below, G for the end` : view.above > 0 ? ` · ${view.above} lines above` : "";
+						const stop = shown.status === "running" ? " · x stop" : "";
 						return [
 							theme.fg("borderMuted", "─".repeat(width)),
 							title + " ".repeat(gap) + status,
 							...output,
-							theme.fg("dim", ` esc to close · ${log}`),
+							theme.fg("dim", ` ↑↓ scroll${stop} · esc back · ${log}${position}`),
 							theme.fg("borderMuted", "─".repeat(width)),
 						].map((line) => truncateToWidth(line, width));
 					},
@@ -632,6 +715,23 @@ export default function backgroundExtension(pi: ExtensionAPI) {
 			});
 		} finally {
 			viewing = undefined;
+		}
+	};
+
+	// "/bg" lists the jobs, "/bg 2" or "/bg bg2" opens one; esc in a job returns to the list it came from
+	const showJob = async (args: string, ctx: ExtensionContext) => {
+		if (!ctx.hasUI) return;
+		if (jobs.size === 0) return ctx.ui.notify("No background jobs yet", "info");
+		const wanted = args.trim().toLowerCase().replace(/^(\d+)$/, "bg$1");
+		const direct = wanted ? jobs.get(wanted) : undefined;
+		if (wanted && !direct) return ctx.ui.notify(`No background job ${args.trim()}; there's ${[...jobs.keys()].join(", ")}`, "warning");
+		if (direct) return viewJob(ctx, direct);
+		let last: string | undefined;
+		for (;;) {
+			const picked = await pickJob(ctx, last);
+			if (!picked) return;
+			last = picked.id;
+			await viewJob(ctx, picked);
 		}
 	};
 	pi.registerCommand("bg", {
@@ -655,11 +755,23 @@ export default function backgroundExtension(pi: ExtensionAPI) {
 		if (ctx.mode === "tui") {
 			ctx.ui.setWidget("background-jobs", (tui, theme) => {
 				redrawJobs = () => tui.requestRender();
+				tuiRef = tui;
 				return jobsWidget(theme);
 			});
-			// ctrl+b moves running bash commands to the background; otherwise it stays the editor's cursor-left
+			// ctrl+b moves running bash commands to the background; otherwise it stays the editor's cursor-left.
+			// ↓ in an empty input opens the list of jobs, when the input has the keyboard.
 			stopCtrlB();
 			stopCtrlB = ctx.ui.onTerminalInput((data) => {
+				if (matchesKey(data, Key.down) && !listing && jobs.size > 0) {
+					const focused = (tuiRef as { getFocusedComponent?: () => unknown } | undefined)?.getFocusedComponent?.() as { getText?: () => string } | null | undefined;
+					if (typeof focused?.getText === "function" && focused.getText() === "") {
+						listing = true;
+						void showJob("", ctx).finally(() => {
+							listing = false;
+						});
+						return { consume: true };
+					}
+				}
 				if (hinted.size === 0 || !matchesKey(data, Key.ctrl("b"))) return undefined;
 				for (const move of [...hinted.values()]) move();
 				return { consume: true };
@@ -668,17 +780,40 @@ export default function backgroundExtension(pi: ExtensionAPI) {
 		for (const entry of ctx.sessionManager.getBranch()) {
 			const msg = entry.type === "message" ? (entry.message as any) : undefined;
 			const n = Number(/^bg(\d+)$/.exec(msg?.role === "toolResult" && msg.toolName === "bg_run" ? String(msg.details?.id) : "")?.[1]);
-			if (n >= next) next = n + 1;
+			if (n >= reg.next) reg.next = n + 1;
 		}
+		// After a reload, the jobs that carried on show again, and their clock starts ticking
+		showJobs();
 	});
 
-	pi.on("session_shutdown", async () => {
+	// This copy reports on jobs from now on; the ones that ended between copies are reported first
+	reg.live = {
+		wake: deliver,
+		redraw: showJobs,
+		finished(job) {
+			report(job, `Background job finished: ${summary(job)}\nLast lines:\n${tail(job.log, TAIL_LINES)}`, {
+				headline: `${job.id} ${job.status === "exited" ? `exited ${job.exitCode}` : job.status} · ${elapsed(job)}`,
+				last: tail(job.log, 1),
+				error: job.status !== "exited" || job.exitCode !== 0,
+			});
+		},
+	};
+	for (const job of reg.unreported.splice(0)) settle(job);
+
+	pi.on("session_shutdown", async (event) => {
 		clearInterval(ticker);
 		for (const timer of holds.values()) clearTimeout(timer);
 		holds.clear();
+		reg.live = undefined;
+		// A reload loads the extension again in this process, so its jobs carry on and the next copy takes them over.
+		// Any other way out leaves the jobs without a session, so they stop.
+		if (event.reason === "reload") return;
 		for (const job of jobs.values()) {
 			if (job.status === "running") job.controller.abort();
 		}
 		jobs.clear();
+		reg.unreported.length = 0;
+		reg.next = 1;
+		reg.turn = 0;
 	});
 }

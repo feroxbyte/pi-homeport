@@ -19,6 +19,7 @@ import {
 	UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { withBackground } from "./turn.ts";
 
 const PROMPT = ">";
 const REPLY = "●";
@@ -228,6 +229,8 @@ export default function chatChrome(pi: ExtensionAPI) {
 	// while the turn line belongs at the top, where the working line was
 	let turnLine: string | undefined;
 	let redrawTurn = () => {};
+	// How many background jobs run now, from the background extension, which this one doesn't import
+	const runningJobs = () => ((globalThis as any)[Symbol.for("pi-homeport.background")] as { running(): number } | undefined)?.running() ?? 0;
 	const showTurn = (line: string | undefined) => {
 		turnLine = line;
 		redrawTurn();
@@ -237,7 +240,13 @@ export default function chatChrome(pi: ExtensionAPI) {
 		turnLine = undefined;
 		ctx.ui.setWidget("pi-homeport-turn", (tui, theme) => {
 			redrawTurn = () => tui.requestRender();
-			return { invalidate() {}, render: (width: number) => (turnLine ? [truncateToWidth(theme.fg("dim", turnLine), width)] : []) };
+			return {
+				invalidate() {},
+				render: (width: number) => {
+					const line = withBackground(turnLine, runningJobs());
+					return line ? [truncateToWidth(theme.fg("dim", line), width)] : [];
+				},
+			};
 		});
 	});
 	pi.on("session_shutdown", async () => clearInterval(timer));

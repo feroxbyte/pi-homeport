@@ -71,7 +71,11 @@ can change them until pi-homeport catches up. To keep pi's own look, leave it ou
 Long commands run in the background (based on
 [pi-background](https://github.com/pringled/pi-extensions/tree/main/packages/pi-background)): the
 model starts them with `bg_run`, a shell command still running after 2 minutes moves there on its
-own, ctrl+b moves one sooner, and `/bg` shows a job's output. The model keeps a todo list you can
+own, and ctrl+b moves one sooner. While jobs run, the line under a turn adds `2 background jobs ·
+↓ to manage`: press ↓ in an empty input (or type `/bg`) for the list, ↑ ↓ to select, enter to open
+a job's output, `x` to stop it, and esc to go back. In a job, ↑ ↓, page up and down, `g` and `G`
+scroll through its log. A `/reload` leaves running jobs alone and the reloaded session reports on
+them; quitting, `/new`, `/resume` and `/fork` stop them. The model keeps a todo list you can
 see above the input (based on
 [rpiv-todo](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo)); `/todos` lists
 it. Don't install those packages next to pi-homeport.
