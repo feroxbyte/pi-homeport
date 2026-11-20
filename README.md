@@ -40,10 +40,15 @@ trusts, and Claude's settings precedence.
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY` apply. `/claude-memory` lists what loaded, opens a file in your
   editor, and turns auto memory on or off.
 
-It also replaces pi's footer with one line: the project, the model and effort, the git branch with
-uncommitted changes (`*`) and commits ahead or behind (`↑2 ↓1`), a context bar, the prompt cache
-hit rate of the last response, the session's cost, and `○ ready` or `● working 12s`. Statuses from
-other extensions follow when there's room. It's based on
+It also replaces pi's footer with one line:
+
+- the project, the model and effort, and the git branch with uncommitted changes (`*`) and commits
+  ahead or behind (`↑2 ↓1`);
+- a context bar with a mark (`┊`) where auto-compaction starts;
+- the prompt cache hit rate of the last response, and the session's cost;
+- `● working 12s · ~70 tok/s` during a turn, and `○ ready · 6s · 332 out · 94 tok/s` after it.
+
+Statuses from other extensions follow when there's room. It's based on
 [pi-context-bar](https://github.com/pringled/pi-extensions/tree/main/packages/pi-context-bar). To
 keep pi's footer, or another one, leave it out: `{ "source": "npm:pi-homeport", "extensions":
 ["!extensions/footer/**"] }`.

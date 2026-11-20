@@ -64,3 +64,19 @@ export function usageTotals(entries: readonly unknown[]): { cost: number; cacheR
 	const total = (last?.input ?? 0) + read + (last?.cacheWrite ?? 0);
 	return { cost, cacheRate: total > 0 ? (read / total) * 100 : undefined };
 }
+
+/** Where auto-compaction starts, as a share of the context window, or undefined when it's off. */
+export function compactionPoint(contextWindow: number, settings: { enabled: boolean; reserveTokens: number } | undefined): number | undefined {
+	if (!settings?.enabled || contextWindow <= 0) return undefined;
+	return Math.max(0, Math.min(1, (contextWindow - settings.reserveTokens) / contextWindow));
+}
+
+/** Output tokens since a turn started: the assistant messages in `entries` from `start` on. */
+export function outputTokensSince(entries: readonly unknown[], start: number): number {
+	let total = 0;
+	for (const entry of entries.slice(start)) {
+		const message = (entry as { type?: string; message?: { role?: string; usage?: { output?: number } } }).message;
+		if ((entry as { type?: string }).type === "message" && message?.role === "assistant") total += message.usage?.output ?? 0;
+	}
+	return total;
+}

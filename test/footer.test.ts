@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { formatElapsed, formatTokens, parseGitStatus, usageTotals } from "../extensions/footer/parts.ts";
+import { compactionPoint, formatElapsed, formatTokens, outputTokensSince, parseGitStatus, usageTotals } from "../extensions/footer/parts.ts";
 
 describe("footer", () => {
 	it("reads branch, changes and ahead/behind from git status", () => {
@@ -33,5 +33,16 @@ describe("footer", () => {
 		assert.equal(totals.cost.toFixed(2), "0.06");
 		assert.equal(totals.cacheRate, 90);
 		assert.equal(usageTotals([]).cacheRate, undefined);
+	});
+
+	it("places the compaction mark where auto-compaction starts", () => {
+		assert.equal(compactionPoint(200_000, { enabled: true, reserveTokens: 16_384 }), (200_000 - 16_384) / 200_000);
+		assert.equal(compactionPoint(200_000, { enabled: false, reserveTokens: 16_384 }), undefined);
+		assert.equal(compactionPoint(0, { enabled: true, reserveTokens: 16_384 }), undefined);
+	});
+
+	it("counts the output tokens of the running turn", () => {
+		const reply = (output: number) => ({ type: "message", message: { role: "assistant", usage: { output } } });
+		assert.equal(outputTokensSince([reply(500), { type: "message", message: { role: "user" } }, reply(120), reply(80)], 1), 200);
 	});
 });
