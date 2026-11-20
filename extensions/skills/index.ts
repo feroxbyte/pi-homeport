@@ -18,7 +18,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { booleanSetting, isRecord, listSetting } from "../shared/claude.ts";
 import { listField, splitFrontmatter } from "../shared/markdown.ts";
 import { activates, type ClaudeSkill, type ClaudeSkillsResult, claudeSkills } from "./discover.ts";
@@ -228,7 +228,8 @@ export default function claudeSkillsExtension(pi: ExtensionAPI) {
 	function registerCommands() {
 		const taken = new Set([...pi.getCommands().map((command) => command.name), ...PI_BUILT_INS]);
 		for (const skill of last?.skills ?? []) {
-			const names = [...skill.qualifiedNames, ...(taken.has(skill.name) && commands.get(skill.name) !== skill.name ? [] : [skill.name])];
+			const bare = skill.bareName && !(taken.has(skill.name) && commands.get(skill.name) !== skill.name);
+			const names = [...skill.qualifiedNames, ...(bare ? [skill.name] : [])];
 			for (const name of names) {
 				if (commands.has(name)) {
 					commands.set(name, skill.name);
@@ -238,7 +239,7 @@ export default function claudeSkillsExtension(pi: ExtensionAPI) {
 				commands.set(name, skill.name);
 				taken.add(name);
 				pi.registerCommand(name, {
-					description: `${skill.listingDescription.split("\n")[0]?.slice(0, 120) ?? ""} (Claude skill)`,
+					description: `${skill.listingDescription.split("\n")[0]?.slice(0, 120) ?? ""} (Claude ${skill.commandFile ? "command" : "skill"})`,
 					handler: async (args, ctx) => {
 						const current = byName.get(commands.get(name) ?? "");
 						if (!current) {
@@ -268,7 +269,7 @@ export default function claudeSkillsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("resources_discover", async (event, ctx) => {
-		last = claudeSkills({ cwd: event.cwd, trusted: ctx.isProjectTrusted() });
+		last = claudeSkills({ cwd: event.cwd, trusted: ctx.isProjectTrusted(), commandDir: path.join(getAgentDir(), "pi-homeport", "commands") });
 		byRealFile = new Map(last.skills.map((skill) => [skill.realFile, skill]));
 		byName = new Map(last.skills.map((skill) => [skill.name, skill]));
 		if (last.setup.reader.unreadable.length > 0) {
@@ -363,8 +364,11 @@ export default function claudeSkillsExtension(pi: ExtensionAPI) {
 			}
 			const lines = [`Handed to pi (${last.skills.length}):`];
 			const bySource = new Map<string, ClaudeSkill[]>();
-			for (const skill of last.skills) bySource.set(skill.source, [...(bySource.get(skill.source) ?? []), skill]);
-			for (const [source, skills] of bySource) lines.push(`  ${source}: ${skills.map((skill) => skill.name).join(", ")}`);
+			for (const skill of last.skills) {
+				const group = skill.commandFile ? `${skill.source} commands` : skill.source;
+				bySource.set(group, [...(bySource.get(group) ?? []), skill]);
+			}
+			for (const [source, skills] of bySource) lines.push(`  ${source}: ${skills.map((skill) => skill.qualifiedNames[0] ?? skill.name).join(", ")}`);
 			const hidden = last.skills.filter((skill) => skill.modelVisibility === "hidden" || skill.modelVisibility === "name-only");
 			if (hidden.length > 0) {
 				lines.push("Limited for the model:");

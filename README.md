@@ -25,6 +25,10 @@ trusts, and Claude's settings precedence.
   - `skillOverrides`, `Skill(...)` deny rules, `when_to_use`, `paths`, `user-invocable`, and a typed
     skill's `model`, `effort` and `disallowed-tools` are honored.
   - `/claude-skills` lists what loaded, what didn't, and why.
+- **Custom commands** from `~/.claude/commands/`, the project's `.claude/commands/` and your plugins,
+  which Claude Code runs as skills: `frontend/component.md` is `/frontend:component`, and a skill
+  with the same name wins. pi loads skills only from `SKILL.md` files, so pi-homeport writes one per
+  command under `~/.pi/agent/pi-homeport/commands/`.
 - **Instructions**: `CLAUDE.md`, `CLAUDE.local.md`, `.claude/rules/` and `AGENTS.md`, from your
   organization, `~/.claude` and every folder up to the project, in Claude's order and by Claude's
   rules: the Project instructions setting, `@path` imports, `claudeMdExcludes`, and rules with
@@ -60,7 +64,8 @@ if it's there. If you also use pi-code, turn off the extensions that do the same
     "!extensions/skills.ts",
     "!extensions/memory.ts",
     "!extensions/claude-rules.ts",
-    "!extensions/context-imports.ts"
+    "!extensions/context-imports.ts",
+    "!extensions/commands.ts"
   ]
 }
 ```

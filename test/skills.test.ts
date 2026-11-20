@@ -392,3 +392,71 @@ describe("permission checks", () => {
 		assert.equal(checkCommand("echo $(date)", bashRules(["Bash(echo *)"], [])).allowed, false);
 	});
 });
+
+describe("commands", () => {
+	function withCommands(trusted = true) {
+		return claudeSkills({ cwd: project, trusted, home, env: {}, managedSettingsDir: path.join(base, "managed"), commandDir: path.join(base, "generated") });
+	}
+
+	it("hands command files to pi as generated skills with Claude's names", () => {
+		write(path.join(home, ".claude", "commands", "review.md"), "---\ndescription: Review code\nname: ignored\npaths: '*.ts'\n---\n\nReview $ARGUMENTS\n");
+		write(path.join(project, ".claude", "commands", "frontend", "component.md"), "\n# Make a component\n\nBuild it.\n");
+		const result = withCommands();
+		const review = result.skills.find((entry) => entry.name === "review");
+		assert.ok(review);
+		assert.equal(review.commandFile, path.join(home, ".claude", "commands", "review.md"));
+		assert.deepEqual(review.qualifiedNames, []);
+		assert.equal(review.bareName, true);
+		assert.equal(review.activation, undefined, "commands have no paths");
+		assert.equal(fs.readFileSync(review.file, "utf8"), "---\ndescription: Review code\nname: review\n---\n\nReview $ARGUMENTS\n");
+		const component = result.skills.find((entry) => entry.name === "frontend-component");
+		assert.ok(component);
+		assert.deepEqual(component.qualifiedNames, ["frontend:component"]);
+		assert.equal(component.bareName, false);
+		assert.equal(component.listingDescription, "# Make a component", "the first non-empty line describes it");
+		assert.equal(component.source, "project");
+	});
+
+	it("lets a skill with the same name win, and skips project commands in an untrusted project", () => {
+		write(path.join(home, ".claude", "skills", "deploy", "SKILL.md"), "---\nname: deploy\ndescription: Skill\n---\nSkill\n");
+		write(path.join(home, ".claude", "commands", "deploy.md"), "Command\n");
+		write(path.join(project, ".claude", "commands", "local.md"), "Local\n");
+		const result = withCommands(false);
+		assert.deepEqual(names(result), ["deploy (personal)"]);
+		assert.match(result.skipped[0]?.reason ?? "", /same name/);
+	});
+
+	it("reads a plugin's commands folder, or its manifest's commands instead", () => {
+		installPlugin("tools@market", { scope: "user" }, {
+			".claude-plugin/plugin.json": { name: "tools" },
+			"commands/status.md": "Show status\n",
+		});
+		installPlugin("other@market", { scope: "user" }, {
+			".claude-plugin/plugin.json": {
+				name: "other",
+				commands: { about: { content: "Explain the plugin.", description: "About other" }, run: { source: "./extra/run.md", model: "opus" } },
+			},
+			"commands/ignored.md": "Ignored\n",
+			"extra/run.md": "Run it\n",
+		});
+		const result = withCommands();
+		assert.deepEqual(
+			result.skills.map((entry) => entry.qualifiedNames[0]),
+			["tools:status", "other:about", "other:run"],
+		);
+		const run = result.skills.find((entry) => entry.name === "run");
+		assert.equal(run?.frontmatter.model, "opus");
+		const about = result.skills.find((entry) => entry.name === "about");
+		assert.equal(about?.listingDescription, "About other");
+		assert.match(fs.readFileSync(about?.file ?? "", "utf8"), /Explain the plugin\.$/);
+	});
+
+	it("removes generated skills for commands that are gone", () => {
+		write(path.join(home, ".claude", "commands", "old.md"), "Old\n");
+		const first = withCommands().skills[0];
+		assert.ok(first && fs.existsSync(first.file));
+		fs.rmSync(path.join(home, ".claude", "commands", "old.md"));
+		withCommands();
+		assert.equal(fs.existsSync(first.file), false);
+	});
+});

@@ -12,7 +12,12 @@
  *    these to the model once it reads or edits a file in `<subdir>`.
  * 5. Plugins Claude loads for the project: a `SKILL.md` at the plugin root, `skills/<skill>/SKILL.md`,
  *    and the folders the manifest's `skills` key names.
- * 6. Skills synced from claude.ai: `~/.claude/skills/synced/<account>/<skill>/SKILL.md`, except the
+ * 6. Command files, which Claude runs as skills: `~/.claude/commands/`, the project's
+ *    `.claude/commands/` (trusted only), and plugins' `commands/` or manifest `commands`. A file in a
+ *    subfolder is named with colons: `frontend/component.md` is `/frontend:component`. A skill with
+ *    the same name wins. pi reads skills only from `SKILL.md` files with a valid name, so each command
+ *    is handed over as a generated `SKILL.md` in `commandDir`, with the same body.
+ * 7. Skills synced from claude.ai: `~/.claude/skills/synced/<account>/<skill>/SKILL.md`, except the
  *    ones built around tools only Claude Code has.
  *
  * pi names a skill by its frontmatter `name`, else its folder. Claude's qualified names
@@ -25,9 +30,11 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { type ClaudeOptions, type ClaudeSetup, enabledPlugins, insidePlugin, isRecord, readClaudeSetup } from "../shared/claude.ts";
+import { stringify as stringifyYaml } from "yaml";
 import { listField, matchesPaths, splitFrontmatter } from "../shared/markdown.ts";
 
 /** claude.ai skills written for tools only Claude Code has, such as its browser and connectors. */
@@ -77,6 +84,11 @@ export interface ClaudeSkill {
 	activation?: { dir?: string; paths?: string[] };
 	/** Frontmatter fields Claude acts on that pi-homeport doesn't, as `field: why`. */
 	unsupported: string[];
+	/** For a command file: where it is, since `file` is the `SKILL.md` generated for pi. */
+	commandFile?: string;
+	/** Whether `/<name>` may be registered. Off for commands in subfolders, which Claude names
+	 * only with colons. */
+	bareName: boolean;
 }
 
 export interface SkippedSkill {
@@ -84,6 +96,12 @@ export interface SkippedSkill {
 	source: SkillSource;
 	file: string;
 	reason: string;
+}
+
+export interface ClaudeSkillsOptions extends ClaudeOptions {
+	/** Where to write the `SKILL.md` files generated for command files. Without it, commands
+	 * aren't loaded. */
+	commandDir?: string;
 }
 
 export interface ClaudeSkillsResult {
@@ -175,6 +193,57 @@ interface Candidate {
 	atPluginRoot?: boolean;
 	/** For a nested skill: the folder whose files activate it. */
 	nestedDir?: string;
+	/** For a command: Claude's name for it without the plugin prefix, inline content from a plugin
+	 * manifest, and fields the manifest sets. */
+	command?: { name: string; content?: string; fields?: Record<string, unknown> };
+}
+
+/** The `.md` files under a commands folder, with Claude's names: the path inside the folder, `/`
+ * replaced by `:`, without `.md`. */
+function commandFilesIn(dir: string): { file: string; name: string }[] {
+	const found: { file: string; name: string }[] = [];
+	const walk = (folder: string, prefix: string) => {
+		let names: string[];
+		try {
+			names = fs.readdirSync(folder).sort();
+		} catch {
+			return;
+		}
+		for (const name of names) {
+			if (name.startsWith(".")) continue;
+			const entry = path.join(folder, name);
+			if (isDirectory(entry)) walk(entry, `${prefix}${name}:`);
+			else if (name.endsWith(".md") && isFile(entry)) found.push({ file: entry, name: `${prefix}${name.slice(0, -3)}` });
+		}
+	};
+	walk(dir, "");
+	return found;
+}
+
+/** A plugin's commands: the manifest's `commands` (a path, a list of paths, or a map of names to a
+ * `source` file or inline `content`), else its `commands/` folder. */
+function pluginCommands(root: string, declared: unknown): { file: string; name: string; content?: string; fields?: Record<string, unknown> }[] {
+	const fromPath = (entry: string) => {
+		const target = insidePlugin(root, entry);
+		if (!target) return [];
+		if (isFile(target)) return target.endsWith(".md") ? [{ file: target, name: path.basename(target, ".md") }] : [];
+		return commandFilesIn(target);
+	};
+	if (declared === undefined) return commandFilesIn(path.join(root, "commands"));
+	if (typeof declared === "string") return fromPath(declared);
+	if (Array.isArray(declared)) return declared.flatMap((entry) => (typeof entry === "string" ? fromPath(entry) : []));
+	if (!isRecord(declared)) return [];
+	return Object.entries(declared).flatMap(([name, entry]) => {
+		if (!isRecord(entry)) return [];
+		const fields: Record<string, unknown> = {};
+		if (typeof entry.description === "string") fields.description = entry.description;
+		if (typeof entry.argumentHint === "string") fields["argument-hint"] = entry.argumentHint;
+		if (typeof entry.model === "string") fields.model = entry.model;
+		if (Array.isArray(entry.allowedTools)) fields["allowed-tools"] = entry.allowedTools;
+		if (typeof entry.content === "string") return [{ file: path.join(root, ".claude-plugin", "plugin.json"), name, content: entry.content, fields }];
+		const file = typeof entry.source === "string" ? insidePlugin(root, entry.source) : undefined;
+		return file && isFile(file) ? [{ file, name, fields }] : [];
+	});
 }
 
 function pluginCandidates(setup: ClaudeSetup): Candidate[] {
@@ -196,6 +265,57 @@ function pluginCandidates(setup: ClaudeSetup): Candidate[] {
 		for (const file of files) candidates.push({ file, source, plugin: info });
 	}
 	return candidates;
+}
+
+function pluginCommandCandidates(setup: ClaudeSetup): Candidate[] {
+	return enabledPlugins(setup).flatMap((plugin) =>
+		pluginCommands(plugin.root, plugin.manifest.commands).map(
+			(entry): Candidate => ({
+				file: entry.file,
+				source: `plugin ${plugin.id}`,
+				plugin: { root: plugin.root, dataDir: plugin.dataDir, name: plugin.name },
+				command: { name: entry.name, ...(entry.content !== undefined ? { content: entry.content } : {}), ...(entry.fields ? { fields: entry.fields } : {}) },
+			}),
+		),
+	);
+}
+
+/** The first non-empty line of a body: Claude's description when the frontmatter has none. */
+function firstLine(body: string): string {
+	return (
+		body
+			.split("\n")
+			.map((line) => line.trim())
+			.find(Boolean) ?? ""
+	);
+}
+
+/** Writes the `SKILL.md` pi loads for a command, unless it's already there, and returns its path. */
+function writeCommandSkill(dir: string, name: string, frontmatter: Record<string, unknown>, body: string): string {
+	const file = path.join(dir, name, "SKILL.md");
+	const content = `---\n${stringifyYaml(frontmatter).trimEnd()}\n---\n\n${body.replace(/^\n+/, "")}`;
+	let current: string | undefined;
+	try {
+		current = fs.readFileSync(file, "utf8");
+	} catch {
+		// Not written yet.
+	}
+	if (current !== content) {
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(file, content);
+	}
+	return file;
+}
+
+/** Removes generated command skills that no longer match a command. */
+function pruneCommandSkills(dir: string, keep: Set<string>) {
+	let names: string[];
+	try {
+		names = fs.readdirSync(dir);
+	} catch {
+		return;
+	}
+	for (const name of names) if (!keep.has(name)) fs.rmSync(path.join(dir, name), { recursive: true, force: true });
 }
 
 function syncedCandidates(personalDir: string): Candidate[] {
@@ -225,7 +345,7 @@ function deniedBy(rules: string[], names: string[]): string | undefined {
 	return undefined;
 }
 
-export function claudeSkills(options: ClaudeOptions): ClaudeSkillsResult {
+export function claudeSkills(options: ClaudeSkillsOptions): ClaudeSkillsResult {
 	const setup = readClaudeSetup(options);
 	const personalDir = path.join(setup.configDir, "skills");
 	const cwd = setup.dirs[0] ?? path.resolve(options.cwd);
@@ -241,8 +361,25 @@ export function claudeSkills(options: ClaudeOptions): ClaudeSkillsResult {
 				]
 			: []),
 		...pluginCandidates(setup),
+		...(options.commandDir
+			? [
+					...commandFilesIn(path.join(setup.configDir, "commands")).map((entry): Candidate => ({ file: entry.file, source: "personal", command: { name: entry.name } })),
+					...(options.trusted
+						? setup.dirs.flatMap((dir) =>
+								commandFilesIn(path.join(dir, ".claude", "commands")).map((entry): Candidate => ({ file: entry.file, source: "project", command: { name: entry.name } })),
+							)
+						: []),
+					...pluginCommandCandidates(setup),
+				]
+			: []),
 		...syncedCandidates(personalDir),
 	];
+	// Generated skills for this project's commands live in their own folder, so sessions in other
+	// projects don't overwrite them.
+	const commandDir = options.commandDir
+		? path.join(options.commandDir, createHash("sha256").update(path.resolve(options.cwd)).digest("hex").slice(0, 16))
+		: undefined;
+	const written = new Set<string>();
 
 	// skillOverrides, highest-precedence file last; and Skill deny rules from every settings file.
 	const overrides = new Map<string, string>();
@@ -264,17 +401,33 @@ export function claudeSkills(options: ClaudeOptions): ClaudeSkillsResult {
 		let content: string;
 		try {
 			realFile = fs.realpathSync(candidate.file);
-			content = fs.readFileSync(candidate.file, "utf8");
+			content = candidate.command?.content ?? fs.readFileSync(candidate.file, "utf8");
 		} catch {
 			continue;
 		}
-		if (seenFiles.has(realFile)) continue;
-		seenFiles.add(realFile);
+		const command = candidate.command;
+		const seenKey = command?.content !== undefined ? `${realFile}#${command.name}` : realFile;
+		if (seenFiles.has(seenKey)) continue;
+		seenFiles.add(seenKey);
 
 		const dir = path.dirname(candidate.file);
-		const { frontmatter } = splitFrontmatter(content);
-		const name = typeof frontmatter.name === "string" && frontmatter.name ? frontmatter.name : path.basename(dir);
-		const skip = (reason: string) => skipped.push({ name, source: candidate.source, file: candidate.file, reason });
+		const split = splitFrontmatter(content);
+		const frontmatter = command ? { ...split.frontmatter, ...command.fields } : split.frontmatter;
+		if (command) {
+			// Claude ignores these in command files; the name comes from the file.
+			delete frontmatter.name;
+			delete frontmatter.paths;
+			if (typeof frontmatter.description !== "string" || !frontmatter.description.trim()) {
+				const line = firstLine(split.body);
+				if (line) frontmatter.description = line;
+			}
+		}
+		const name = command
+			? command.name.replaceAll(":", "-")
+			: typeof frontmatter.name === "string" && frontmatter.name
+				? frontmatter.name
+				: path.basename(dir);
+		const skip = (reason: string) => skipped.push({ name: command && !candidate.plugin ? command.name : name, source: candidate.source, file: candidate.file, reason });
 
 		if (candidate.source === "claude.ai" && CLAUDE_ONLY_SYNCED_SKILLS.has(path.basename(dir))) {
 			skip("it is written for tools only Claude Code has");
@@ -289,10 +442,11 @@ export function claudeSkills(options: ClaudeOptions): ClaudeSkillsResult {
 			continue;
 		}
 		if (typeof frontmatter.description !== "string" || frontmatter.description.trim() === "") {
-			skip("it has no description field, which pi requires");
+			skip(command ? "it's empty" : "it has no description field, which pi requires");
 			continue;
 		}
-		const override = candidate.plugin ? undefined : overrides.get(name);
+		if (command && !commandDir) continue;
+		const override = candidate.plugin ? undefined : overrides.get(command?.name ?? name);
 		if (override === "off") {
 			skip("skillOverrides turns it off");
 			continue;
@@ -303,11 +457,14 @@ export function claudeSkills(options: ClaudeOptions): ClaudeSkillsResult {
 			continue;
 		}
 
+		const claudeName = command?.name ?? name;
 		const qualifiedNames = candidate.plugin
-			? [`${candidate.plugin.name}:${name}`]
+			? [`${candidate.plugin.name}:${claudeName}`]
 			: candidate.source === "claude.ai"
 				? [`anthropic-skills:${name}`]
-				: [];
+				: command && claudeName !== name
+					? [claudeName]
+					: [];
 		const denied = deniedBy(denyRules, [name, ...qualifiedNames]);
 		const disabledForModel = booleanField(frontmatter["disable-model-invocation"]) === true;
 		let modelVisibility: ModelVisibility = "full";
@@ -335,12 +492,19 @@ export function claudeSkills(options: ClaudeOptions): ClaudeSkillsResult {
 		if (frontmatter["argument-hint"] !== undefined) unsupported.push("argument-hint: pi's commands can't show argument hints");
 		if (frontmatter.shell === "powershell" && process.platform === "win32") unsupported.push("shell: powershell: commands run with bash");
 
+		let file = candidate.file;
+		if (command && commandDir) {
+			file = writeCommandSkill(commandDir, name, { ...frontmatter, name }, split.body);
+			written.add(name);
+			realFile = fs.realpathSync(file);
+		}
+
 		const skill: ClaudeSkill = {
 			name,
 			qualifiedNames,
-			file: candidate.file,
+			file,
 			realFile,
-			dir,
+			dir: command?.content !== undefined ? (candidate.plugin?.root ?? dir) : dir,
 			source: candidate.source,
 			frontmatter,
 			...(candidate.plugin ? { plugin: { root: candidate.plugin.root, dataDir: candidate.plugin.dataDir } } : {}),
@@ -351,11 +515,14 @@ export function claudeSkills(options: ClaudeOptions): ClaudeSkillsResult {
 			listingDescription,
 			...(activation ? { activation } : {}),
 			unsupported,
+			...(command ? { commandFile: candidate.file } : {}),
+			bareName: !command || candidate.plugin !== undefined || claudeName === name,
 		};
 		byName.set(name, skill);
 		skills.push(skill);
 	}
 
+	if (commandDir) pruneCommandSkills(commandDir, written);
 	return { skills, skipped, setup };
 }
 
