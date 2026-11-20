@@ -4,9 +4,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { activates, claudeSkills } from "../extensions/claude-skills/discover.ts";
-import { DISABLED_NOTICE, type ExpandOptions, expandSkill, readsWholeFile, splitArguments } from "../extensions/claude-skills/expand.ts";
-import { bashRules, checkCommand, matchesRule, splitCommand, splitRules, stripWrappers } from "../extensions/claude-skills/permissions.ts";
+import { activates, claudeSkills } from "../extensions/skills/discover.ts";
+import { DISABLED_NOTICE, type ExpandOptions, expandSkill, readsWholeFile, splitArguments } from "../extensions/skills/expand.ts";
+import { bashRules, checkCommand, matchesRule, splitCommand, splitRules, stripWrappers } from "../extensions/skills/permissions.ts";
 import { defaultManagedSettingsDir, readClaudeSetup } from "../extensions/shared/claude.ts";
 
 let base: string;

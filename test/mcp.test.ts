@@ -3,8 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { matchesUrl } from "../extensions/claude-mcp/policy.ts";
-import { claudeMcpServers, type HelperRunner } from "../extensions/claude-mcp/servers.ts";
+import { matchesUrl } from "../extensions/mcp/policy.ts";
+import { claudeMcpServers, type HelperRunner } from "../extensions/mcp/servers.ts";
 
 let base: string;
 let home: string;

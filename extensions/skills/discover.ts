@@ -27,8 +27,8 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parse as parseYaml } from "yaml";
 import { type ClaudeOptions, type ClaudeSetup, enabledPlugins, insidePlugin, isRecord, readClaudeSetup } from "../shared/claude.ts";
+import { listField, matchesPaths, splitFrontmatter } from "../shared/markdown.ts";
 
 /** claude.ai skills written for tools only Claude Code has, such as its browser and connectors. */
 export const CLAUDE_ONLY_SYNCED_SKILLS = new Set([
@@ -90,32 +90,6 @@ export interface ClaudeSkillsResult {
 	skills: ClaudeSkill[];
 	skipped: SkippedSkill[];
 	setup: ClaudeSetup;
-}
-
-/** pi's frontmatter reading: a leading `---` block, parsed as YAML. Claude still loads a skill
- * whose YAML doesn't parse, with no fields set; so does this. */
-export function splitFrontmatter(content: string): { frontmatter: Record<string, unknown>; body: string } {
-	const normalized = content.replace(/^﻿/, "").replace(/\r\n?/g, "\n");
-	if (!normalized.startsWith("---")) return { frontmatter: {}, body: normalized };
-	const end = normalized.indexOf("\n---", 3);
-	if (end === -1) return { frontmatter: {}, body: normalized };
-	const body = normalized.slice(end + 4).replace(/^[^\n]*\n?/, "");
-	try {
-		const parsed: unknown = parseYaml(normalized.slice(4, end));
-		return { frontmatter: isRecord(parsed) ? parsed : {}, body };
-	} catch {
-		return { frontmatter: {}, body };
-	}
-}
-
-/** A list field: a YAML list, or a string separated by commas (and spaces, when `spaces`). */
-export function listField(value: unknown, spaces = false): string[] {
-	if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
-	if (typeof value !== "string") return [];
-	return value
-		.split(spaces ? /[\s,]+/ : /,/)
-		.map((item) => item.trim())
-		.filter(Boolean);
 }
 
 /** Claude's boolean frontmatter: also yes/no, on/off and 1/0, in any letter case. */
@@ -392,11 +366,5 @@ export function activates(skill: ClaudeSkill, file: string, cwd: string): boolea
 	if (!activation) return false;
 	const resolved = path.resolve(cwd, file);
 	if (activation.dir && (resolved === activation.dir || resolved.startsWith(`${activation.dir}${path.sep}`))) return true;
-	if (!activation.paths) return false;
-	const relative = path.relative(cwd, resolved);
-	if (relative.startsWith("..") || path.isAbsolute(relative)) return false;
-	return activation.paths.some((pattern) => {
-		const clean = pattern.replace(/^\.\//, "");
-		return path.matchesGlob(relative, clean) || (!clean.includes("/") && path.matchesGlob(path.basename(relative), clean));
-	});
+	return activation.paths !== undefined && matchesPaths(resolved, cwd, activation.paths);
 }

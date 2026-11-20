@@ -20,7 +20,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { booleanSetting, isRecord, listSetting } from "../shared/claude.ts";
-import { activates, type ClaudeSkill, type ClaudeSkillsResult, claudeSkills, listField, splitFrontmatter } from "./discover.ts";
+import { listField, splitFrontmatter } from "../shared/markdown.ts";
+import { activates, type ClaudeSkill, type ClaudeSkillsResult, claudeSkills } from "./discover.ts";
 import { type ExpandResult, expandSkill, readsWholeFile } from "./expand.ts";
 import { bashRules, checkCommand, splitCommand, splitRules, stripWrappers } from "./permissions.ts";
 
