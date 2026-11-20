@@ -150,6 +150,12 @@ instruction and memory files that loaded, with a warning that names `/compact` w
 is over the window. The total is pi's own count, the one in the footer; the categories are estimates.
 Leave it out with `"!extensions/context/**"`.
 
+A session you don't name gets a title from its first prompt, as in Claude Code (based on the
+session-title extension of pi-code), and the title shows in `/resume` and in the terminal's title. A
+name you set with `--name` or `/name` wins. The model `ANTHROPIC_DEFAULT_HAIKU_MODEL` names writes the
+title when pi has it, the session's model otherwise; print runs get none, and
+`CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` turns titles off. Leave it out with `"!extensions/title/**"`.
+
 pi-homeport draws the tools of these packages the same way, and works well with them:
 [pi-subagents](https://www.npmjs.com/package/pi-subagents) for subagents,
 [pi-web-access](https://www.npmjs.com/package/pi-web-access) for more search providers, and
@@ -193,7 +199,8 @@ if it's there. If you also use pi-code, turn off the extensions that do the same
     "!extensions/git-checkpoint.ts",
     "!extensions/plan-mode/**",
     "!extensions/goal.ts",
-    "!extensions/context-usage.ts"
+    "!extensions/context-usage.ts",
+    "!extensions/session-title.ts"
   ]
 }
 ```
