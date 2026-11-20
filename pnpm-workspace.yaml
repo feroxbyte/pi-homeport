@@ -1,0 +1,4 @@
+allowBuilds:
+  # pi's Google provider and its protobuf dependency: type-checking extensions never runs them.
+  "@google/genai": false
+  protobufjs: false
