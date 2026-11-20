@@ -162,6 +162,12 @@ conventions, with Cursor and Copilot rules folded in. A CLAUDE.md that exists is
 replaced, and a project that relies on AGENTS.md keeps it through an `@AGENTS.md` import. Leave it
 out with `"!extensions/init/**"`.
 
+`ultrathink` in a prompt asks for deeper reasoning on that turn, as in Claude Code (based on the
+thinking extension of pi-code): the turn runs at `xhigh`, or the model's highest level below it, with
+an instruction to reason more deeply, and your level comes back after it. As in Claude, only the
+word on its own counts, not in quotes, brackets, code or paths, nor in a prompt that starts with
+`/`; `CLAUDE_CODE_DISABLE_ULTRATHINK=1` turns it off. Leave it out with `"!extensions/thinking/**"`.
+
 pi-homeport draws the tools of these packages the same way, and works well with them:
 [pi-subagents](https://www.npmjs.com/package/pi-subagents) for subagents,
 [pi-web-access](https://www.npmjs.com/package/pi-web-access) for more search providers, and
@@ -207,7 +213,8 @@ if it's there. If you also use pi-code, turn off the extensions that do the same
     "!extensions/goal.ts",
     "!extensions/context-usage.ts",
     "!extensions/session-title.ts",
-    "!extensions/init.ts"
+    "!extensions/init.ts",
+    "!extensions/thinking.ts"
   ]
 }
 ```
