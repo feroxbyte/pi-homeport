@@ -68,6 +68,12 @@ Your messages and the model's replies are restyled through pi's internal compone
 can change them until pi-homeport catches up. To keep pi's own look, leave it out:
 `"!extensions/chat/**"`.
 
+Long commands run in the background (based on
+[pi-background](https://github.com/pringled/pi-extensions/tree/main/packages/pi-background)): the
+model starts them with `bg_run`, a shell command still running after 2 minutes moves there on its
+own, ctrl+b moves one sooner, and `/bg` shows a job's output. Don't install pi-background next to
+pi-homeport.
+
 Not supported, because pi can't do it: SSE and WebSocket MCP servers, MCP prompts as commands,
 plugin options Claude keeps in your system's credential store, argument hints, Claude Code's
 built-in skills, and instructions that load when a shell command such as `cat` reads a file. Imports
