@@ -142,8 +142,8 @@ SOFTWARE.
 
 ## pi-code
 
-`extensions/web` and `extensions/monitor` are based on the web and monitor extensions of
-[pi-code](https://github.com/ilovepixelart/pi-code).
+`extensions/web`, `extensions/monitor` and `extensions/rewind` are based on the web, monitor and
+git-checkpoint extensions of [pi-code](https://github.com/ilovepixelart/pi-code).
 
 ```text
 MIT License

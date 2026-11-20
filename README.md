@@ -99,6 +99,19 @@ the VS Code one. You count as away when the terminal reports it lost focus, or c
 all; pressing Esc never notifies. Leave it out with `"!extensions/notify/**"`, and don't install
 pi-notify next to it.
 
+Before each prompt, pi saves the files it has edited in the session as a checkpoint, as Claude Code
+does (based on the git-checkpoint extension of [pi-code](https://github.com/ilovepixelart/pi-code)).
+`/rewind` (or `/undo`) lists your prompts; pick one to restore the code and the conversation, only
+the conversation, or only the code, or to summarize the conversation from there on. Edited and
+deleted files are put back and files created since are removed; the prompt comes back into the
+editor. Picking a prompt in `/tree` (Esc Esc) or `/fork` offers to restore the code too. Only files
+pi's edit and write tools touched are tracked, never files your git ignores or files outside the
+repository, and symlinks and hard-linked files are skipped. Each code restore can be undone from the
+top of the `/rewind` list. Checkpoints need a git repository, are kept in
+`~/.pi/agent/pi-homeport/checkpoints/` for `cleanupPeriodDays` (30 days by default), and
+`CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING=1` turns them off. Leave it out with
+`"!extensions/rewind/**"`.
+
 `web_search` and `web_fetch` need no API key (based on the web extension of
 [pi-code](https://github.com/ilovepixelart/pi-code)). Search reads DuckDuckGo's results page, with
 allowed and blocked domains. Fetch works as Claude Code's WebFetch does: http becomes https, a
@@ -116,6 +129,7 @@ pi-homeport draws the tools of these packages the same way, and works well with 
 questions to you.
 
 Not supported, because pi can't do it: SSE and WebSocket MCP servers, MCP prompts as commands,
+"Summarize up to here" in `/rewind` (pi only compacts up to a point it chooses),
 plugin options Claude keeps in your system's credential store, argument hints, Claude Code's
 built-in skills, and instructions that load when a shell command such as `cat` reads a file. Imports
 from outside a project load once you've approved them in Claude Code, since pi can't show that
@@ -147,7 +161,8 @@ if it's there. If you also use pi-code, turn off the extensions that do the same
     "!extensions/notify.ts",
     "!extensions/web.ts",
     "!extensions/background-bash.ts",
-    "!extensions/monitor.ts"
+    "!extensions/monitor.ts",
+    "!extensions/git-checkpoint.ts"
   ]
 }
 ```
