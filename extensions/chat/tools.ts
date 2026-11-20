@@ -62,6 +62,16 @@ export function callLabel(toolName: string, args: any, cwd: string): { name: str
 				.find(Boolean);
 			return { name: "Codemode", argument: first ?? "" };
 		}
+		case "web_search": {
+			const queries: unknown[] = Array.isArray(args?.queries) ? args.queries : [args?.query];
+			return { name: "Web Search", argument: queries.filter(Boolean).map(quote).join(", ") };
+		}
+		case "fetch_content": {
+			const urls: unknown[] = Array.isArray(args?.urls) ? args.urls : [args?.url];
+			return { name: "Fetch", argument: urls.length === 1 ? String(urls[0] ?? "") : plural(urls.length, "URL") };
+		}
+		case "get_search_content":
+			return { name: "Search results", argument: String(args?.responseId ?? args?.id ?? "") };
 		case "edit":
 			return { name: "Update", argument: shortPath(args?.path, cwd) };
 		case "write":
@@ -87,6 +97,47 @@ function outputLines(text: string): string[] {
 		.map((line) => stripTerminalSequences(line).replace(/\t/g, "  "));
 }
 
+/**
+ * A read's own text: the first text part of its result, without pi's closing note on a long file
+ * (`[Showing lines 1-200 of 900. …]`). Extensions append other parts, such as instructions that now
+ * apply, which aren't part of the file.
+ */
+export function readText(result: Result): string {
+	const own = result.content.find((part) => part.type === "text")?.text ?? "";
+	return own.replace(/\n\n\[(?:Showing lines \d+-\d+ of \d+|\d+ more lines in file)[^\]]*\]\s*$/, "");
+}
+
+/** Whether a failed call was stopped by you (Esc), not by an error. */
+export function wasInterrupted(text: string): boolean {
+	return /^(?:Operation aborted|Request was aborted|Command aborted|Aborted)\.?$/i.test(text.trim());
+}
+
+/** `4s`, `1m 04s`. */
+export function formatDuration(ms: number): string {
+	const seconds = Math.max(0, Math.round(ms / 1000));
+	return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+const compactCount = (count: number) => (count < 1000 ? `${count}` : `${(count / 1000).toFixed(1)}k`);
+
+interface AgentRun {
+	agent?: string;
+	exitCode?: number;
+	errorMessage?: string;
+	messages?: Array<{ role?: string; content?: Array<{ type?: string }> }>;
+	usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+}
+
+/** An agent run as Claude Code sums it up: `Done (12 tool uses · 31.2k tokens · 1m 04s)`. */
+export function agentSummary(run: AgentRun, ms: number | undefined): string {
+	const uses = (run.messages ?? []).flatMap((message) => (message.role === "assistant" ? (message.content ?? []) : [])).filter((part) => part.type === "toolCall").length;
+	const usage = run.usage ?? {};
+	const tokens = (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+	const stats = [plural(uses, "tool use"), `${compactCount(tokens)} tokens`, ...(ms !== undefined ? [formatDuration(ms)] : [])].join(" · ");
+	if (run.exitCode !== undefined && run.exitCode !== 0) return `Failed (${stats})${run.errorMessage ? `: ${run.errorMessage.split("\n")[0]}` : ""}`;
+	return `Done (${stats})`;
+}
+
 /** The one-line summary under a finished call. */
 export function resultSummary(toolName: string, text: string): string {
 	const lines = text.trim() === "" ? [] : text.trimEnd().split("\n");
@@ -99,6 +150,10 @@ export function resultSummary(toolName: string, text: string): string {
 			return lines.length === 0 || /^no files/i.test(lines[0] ?? "") ? "No files found" : `Found ${plural(lines.length, "file")}`;
 		case "ls":
 			return `Listed ${plural(lines.length, "path")}`;
+		case "fetch_content": {
+			const kb = Buffer.byteLength(text, "utf8") / 1024;
+			return `Received ${kb < 10 ? kb.toFixed(1) : Math.round(kb)}KB`;
+		}
 		default:
 			return lines.length === 0 ? "(No output)" : (lines[0] ?? "") + (lines.length > 1 ? ` … +${plural(lines.length - 1, "line")}` : "");
 	}
@@ -114,6 +169,17 @@ export default function chatTools(pi: ExtensionAPI) {
 	});
 	pi.on("agent_end", async () => {
 		live = false;
+	});
+	/** When each running call started and how long finished ones took, for agent rows. */
+	const started = new Map<string, number>();
+	const took = new Map<string, number>();
+	pi.on("tool_execution_start", async (event) => {
+		started.set(event.toolCallId, Date.now());
+	});
+	pi.on("tool_execution_end", async (event) => {
+		const start = started.get(event.toolCallId);
+		if (start !== undefined) took.set(event.toolCallId, Date.now() - start);
+		started.delete(event.toolCallId);
 	});
 
 	/** The dot's color: dim while the call streams, accent while it runs, then green or red. History
@@ -148,6 +214,7 @@ export default function chatTools(pi: ExtensionAPI) {
 
 	/** A failed call's error: its first line, or all of it when expanded. */
 	const errorRows = (text: string, expanded: boolean | undefined, theme: Theme) => {
+		if (wasInterrupted(text)) return underCall(["Interrupted by user"], theme, "error");
 		const lines = outputLines(text);
 		if (expanded || lines.length <= 1) return underCall(lines.slice(0, EXPANDED_LINES), theme, "error");
 		return underCall([lines[0] ?? "", expandHint(lines.length - 1)], theme, "error");
@@ -184,7 +251,13 @@ export default function chatTools(pi: ExtensionAPI) {
 				const shown = lines.slice(0, BASH_PREVIEW_LINES);
 				return underCall(lines.length > shown.length ? [...shown, expandHint(lines.length - shown.length)] : shown, theme, "toolOutput");
 			}
-			return underCall([resultSummary(toolName, text)], theme);
+			if (toolName === "web_search") {
+				const args = context.args as any;
+				const searches = Array.isArray(args?.queries) ? args.queries.length : 1;
+				const ms = took.get(context.toolCallId);
+				return underCall([`Did ${plural(searches, "search", "searches")}${ms !== undefined ? ` in ${formatDuration(ms)}` : ""}`], theme);
+			}
+			return underCall([resultSummary(toolName, toolName === "read" ? readText(result as Result) : text)], theme);
 		},
 	});
 
@@ -246,15 +319,98 @@ export default function chatTools(pi: ExtensionAPI) {
 		},
 	});
 
-	const OWN = new Set(["bash", "read", "grep", "find", "ls", "tool_search", "codemode"]);
+	/** The todo tool: `● Update Todos` with the list as a checklist under it. */
+	const todoTool: ToolRenderers = {
+		renderShell: "self",
+		renderCall: (_args, theme, context) => {
+			const mark = theme.fg(status(context as RowContext), `${MARK} `);
+			return { invalidate() {}, render: () => ["", mark + theme.fg("toolTitle", theme.bold("Update Todos"))] };
+		},
+		renderResult(result, { isPartial, expanded }, theme, context) {
+			if (isPartial) return empty();
+			// pi-homeport's todo extension reports `tasks` with a `subject`; pi-code's reported `todos` with `text`.
+			const details = (result as any).details as
+				| { tasks?: Array<{ subject: string; status: string }>; todos?: Array<{ text: string; status: string }>; error?: string }
+				| undefined;
+			if (context.isError || details?.error) return errorRows(details?.error ?? resultText(result as Result), expanded, theme);
+			const todos = [
+				...(details?.tasks ?? []).filter((task) => task.status !== "deleted").map((task) => ({ text: task.subject, status: task.status })),
+				...(details?.todos ?? []),
+			];
+			if (todos.length === 0) return underCall(["No todos"], theme);
+			return {
+				invalidate() {},
+				render: (width: number) =>
+					todos.flatMap((todo, i) => {
+						const box = todo.status === "completed" ? "☒" : "☐";
+						const text =
+							todo.status === "completed"
+								? theme.fg("dim", theme.strikethrough ? theme.strikethrough(todo.text) : todo.text)
+								: todo.status === "in_progress"
+									? theme.bold(todo.text)
+									: todo.text;
+						return wrapTextWithAnsi(`${box} ${text}`, Math.max(10, width - 5)).map((line, j) => (i === 0 && j === 0 ? `  ${theme.fg("dim", ELBOW)}  ` : "     ") + line);
+					}),
+			};
+		},
+	};
+
+	/** pi-code's subagent tool: one `● agent(task)` row per agent, with `Done (…)` under it. */
+	const agentTool = (own: ToolRenderers | undefined): ToolRenderers => ({
+		renderShell: "self",
+		renderCall(args: any, theme, context) {
+			const calls: Array<{ agent?: string; task?: string }> = args?.chain?.length ? args.chain : args?.tasks?.length ? args.tasks : [{ agent: args?.agent, task: args?.task }];
+			const mark = theme.fg(status(context as RowContext), `${MARK} `);
+			const rows = calls.map((call, i) => {
+				const task = String(call.task ?? "").split("\n")[0] ?? "";
+				const label = theme.fg("toolTitle", theme.bold(call.agent ?? "agent")) + theme.fg("toolTitle", `(${task})`);
+				return (i === 0 ? mark : `${args?.chain?.length ? theme.fg("dim", "→") : theme.fg(status(context as RowContext), MARK)} `) + label;
+			});
+			return { invalidate() {}, render: (width: number) => ["", ...rows.map((row) => truncateToWidth(row, width))] };
+		},
+		renderResult(result, options, theme, context) {
+			if (options.expanded && own?.renderResult) {
+				const inner = own.renderResult(result, options, theme, { ...context, lastComponent: undefined });
+				return { invalidate: () => inner.invalidate(), render: (width: number) => inner.render(Math.max(10, width - 5)).map((line) => `     ${line}`) };
+			}
+			const runs = (((result as any).details?.results ?? []) as AgentRun[]).filter(Boolean);
+			if (options.isPartial) return underCall([runs.length ? `Running… (${plural(runs.length, "agent")} started)` : "Running…"], theme);
+			if (runs.length === 0) return context.isError ? errorRows(resultText(result as Result), options.expanded, theme) : underCall([resultSummary("subagent", resultText(result as Result))], theme);
+			const ms = took.get(context.toolCallId);
+			const lines = runs.map((run) => (runs.length > 1 ? `${run.agent ?? "agent"}: ` : "") + agentSummary(run, runs.length === 1 ? ms : undefined));
+			if (runs.length > 1 && ms !== undefined) lines.push(`All done in ${formatDuration(ms)}`);
+			return underCall([...lines, `(${keyHint("app.tools.expand", "to see the transcript")})`], theme, runs.some((run) => run.exitCode) ? "error" : "dim");
+		},
+	});
+
+	const OWN = new Set(["bash", "read", "grep", "find", "ls", "tool_search", "codemode", "web_search", "fetch_content", "get_search_content"]);
 	const edit = fileTool("edit");
 	const write = fileTool("write");
 	// Only the drawing changes: the tools run as before, with their own schema and on/off state.
 	pi.registerToolRenderer((toolName, next) => {
 		if (toolName === "edit") return edit;
 		if (toolName === "write") return write;
+		if (toolName === "todo") return todoTool;
+		if (toolName === "subagent") {
+			const own = next();
+			const ours = agentTool(own);
+			const theirs = own && own.renderShell !== "self" ? otherTool(toolName, own) : own;
+			if (!theirs) return ours;
+			// Known results (pi-code's: per-agent messages and usage) get Claude's `Done (…)` summary; any
+			// other subagent extension, such as pi-subagents, keeps its own live view under the dot.
+			const known = (result: unknown) => {
+				const runs = (result as any)?.details?.results;
+				return Array.isArray(runs) && runs.every((run: any) => Array.isArray(run?.messages) && typeof run?.usage === "object");
+			};
+			return {
+				...theirs,
+				renderResult: (result, options, theme, context) =>
+					known(result) || !theirs.renderResult ? ours.renderResult!(result, options, theme, context) : theirs.renderResult(result, options, theme, context),
+			};
+		}
 		if (OWN.has(toolName) || toolName.startsWith("mcp__")) {
-			if (toolName === "codemode" || toolName.startsWith("mcp__")) {
+			// Expanded, these keep pi's own result view: highlighted file content, images, nested calls.
+			if (toolName === "read" || toolName === "codemode" || toolName.startsWith("mcp__")) {
 				const pis = next()?.renderResult;
 				if (pis) pisResult.set(toolName, pis);
 			}

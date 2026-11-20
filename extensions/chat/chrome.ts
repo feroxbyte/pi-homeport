@@ -9,8 +9,16 @@
  * Based on pi-polish by Thomas van Dongen (MIT; see THIRD_PARTY_NOTICES.md).
  */
 
-import { AssistantMessageComponent, CustomEditor, type ExtensionAPI, UserMessageComponent } from "@earendil-works/pi-coding-agent";
-import { Markdown, MouseRegion, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+	AssistantMessageComponent,
+	CompactionSummaryMessageComponent,
+	CustomEditor,
+	type ExtensionAPI,
+	keyHint,
+	SkillInvocationMessageComponent,
+	UserMessageComponent,
+} from "@earendil-works/pi-coding-agent";
+import { Markdown, Text, truncateToWidth } from "@earendil-works/pi-tui";
 
 const PROMPT = ">";
 const REPLY = "●";
@@ -23,6 +31,11 @@ const LEADING_ESCAPES = /^((?:\x1b\[[0-9;]*m|\x1b\][^\x07]*\x07)*) {2}/;
 const OSC133_START = "\x1b]133;A\x07";
 const OSC133_END = "\x1b]133;B\x07\x1b]133;C\x07";
 const patched = Symbol.for("pi-homeport.chat.patched");
+/** Marks a prompt line a skill row draws itself. */
+const ownPrompt = Symbol.for("pi-homeport.chat.ownPrompt");
+/** Set on pi's own copy of a typed skill's text, which the skill row already shows. */
+const shownBySkill = Symbol.for("pi-homeport.chat.shownBySkill");
+const ELBOW = "⎿";
 
 function markFirstLine(line: string, marker: string): string {
 	return line.replace(LEADING_ESCAPES, (_m, esc: string) => `${esc}${marker} `);
@@ -36,21 +49,22 @@ function patchOnce(proto: any, method: string, wrap: (original: (...args: any[])
 }
 
 export default function chatChrome(pi: ExtensionAPI) {
+	/** The text of typed skills a skill row has drawn, waiting for pi's own copy to hide. */
+	const typedTexts = new Map<string, number>();
 	try {
 		patchOnce(AssistantMessageComponent.prototype, "updateContent", (original) =>
 			function (this: any, message: any, ...rest: any[]) {
 				// Two columns of padding so reply text lines up behind the ● marker, like tool rows
 				this.outputPad = Math.max(this.outputPad ?? 1, 2);
 				original.call(this, message, ...rest);
-				// Hidden thinking draws nothing instead of a "Thinking..." line plus spacers. Its rows stay in place,
-				// so extensions that read pi's layout, like pi-stereo-view, still match it
-				// A block collapsed by clicking it while thinking is shown keeps its line, so it can be clicked open again
-				const children: any[] = this.hideThinkingBlock ? (this.contentContainer?.children ?? []) : [];
-				children.forEach((child, i) => {
-					if (!(child instanceof MouseRegion) || !((child as any).child instanceof Text)) return;
-					const spacer = [children[i + 1], children[i - 1]].find((c) => c instanceof Spacer);
-					for (const row of [child, spacer]) if (row) row.render = () => [];
-				});
+				// A reply stopped with Esc reads as Claude Code's: interrupted by you, not an error. A reply with
+				// no text of its own, recorded after an interrupted tool call, adds nothing: the call's row says it.
+				const wrote = (message?.content ?? []).some((part: any) => part.type === "text" && part.text?.trim());
+				for (const child of this.contentContainer?.children ?? []) {
+					if (!(child instanceof Text) || !/^(?:\x1b\[[0-9;]*m)*Operation aborted/.test((child as any).text ?? "")) continue;
+					if (wrote) child.setText(`${DIM}${ELBOW}${RESET}  \x1b[31mInterrupted by user${RESET}`);
+					else child.render = () => [];
+				}
 				// Text blocks are the Markdown children without a default style; thinking blocks carry one
 				for (const child of this.contentContainer?.children ?? []) {
 					if (!(child instanceof Markdown) || (child as any).defaultTextStyle !== undefined || (child as any)[patched]) continue;
@@ -75,6 +89,14 @@ export default function chatChrome(pi: ExtensionAPI) {
 		);
 		patchOnce(UserMessageComponent.prototype, "render", (original) =>
 			function (this: any, width: number) {
+				// pi's copy of a typed skill's text, which the skill row above already shows
+				if (this[shownBySkill] === undefined && !this[ownPrompt]) {
+					const waiting = typedTexts.get(this.text) ?? 0;
+					this[shownBySkill] = waiting > 0;
+					if (waiting > 1) typedTexts.set(this.text, waiting - 1);
+					else typedTexts.delete(this.text);
+				}
+				if (this[shownBySkill]) return [];
 				const lines: string[] = original.call(this, width);
 				if (lines.length < 3) return lines;
 				const strip = (l: string) => l.replace(OSC133_START, "").replace(OSC133_END, "");
@@ -82,6 +104,34 @@ export default function chatChrome(pi: ExtensionAPI) {
 				body[0] = OSC133_START + markFirstLine(body[0], `${DIM}${PROMPT}\x1b[22m`);
 				body[body.length - 1] = body[body.length - 1] + OSC133_END;
 				return [...body, ""];
+			},
+		);
+
+		// A typed skill: what you typed as a prompt, then `⎿  Loaded skill name`, as Claude Code shows it.
+		// The skill's text unfolds with ctrl+o, as before.
+		patchOnce(SkillInvocationMessageComponent.prototype, "render", (original) =>
+			function (this: any, width: number) {
+				const block = this.skillBlock as { name: string; userMessage?: string };
+				let prompt: string[] = [];
+				if (block.userMessage) {
+					if (!this[ownPrompt]) {
+						typedTexts.set(block.userMessage, (typedTexts.get(block.userMessage) ?? 0) + 1);
+						this[ownPrompt] = new UserMessageComponent(block.userMessage, this.markdownTheme, 2);
+						this[ownPrompt][ownPrompt] = true;
+					}
+					prompt = this[ownPrompt].render(width).filter((line: string, i: number, all: string[]) => i < all.length - 1 || line !== "");
+				}
+				const hint = this.expanded ? "" : ` (${keyHint("app.tools.expand", "to expand")})`;
+				const loaded = `  ${DIM}${ELBOW}  Loaded skill ${block.name}${RESET}${DIM}${hint}${RESET}`;
+				return [...prompt, truncateToWidth(loaded, width), ...(this.expanded ? original.call(this, width) : [])];
+			},
+		);
+
+		// Compaction as one quiet line until ctrl+o shows the summary
+		patchOnce(CompactionSummaryMessageComponent.prototype, "render", (original) =>
+			function (this: any, width: number) {
+				if (this.expanded) return original.call(this, width);
+				return [truncateToWidth(`${ORANGE}✻${RESET} ${DIM}Conversation compacted (${keyHint("app.tools.expand", "for the summary")})${RESET}`, width)];
 			},
 		);
 	} catch (err) {
@@ -125,7 +175,10 @@ export default function chatChrome(pi: ExtensionAPI) {
 		}
 	};
 	pi.on("session_start", async (_event, ctx) => {
-		if (ctx.hasUI) ctx.ui.setWorkingIndicator({ frames: SPINNER, intervalMs: 120 });
+		if (!ctx.hasUI) return;
+		ctx.ui.setWorkingIndicator({ frames: SPINNER, intervalMs: 120 });
+		// Hidden thinking as one dim line, like Claude Code's
+		ctx.ui.setHiddenThinkingLabel(`∴ Thought (${keyHint("app.thinking.toggle", "to show")})`);
 	});
 	pi.on("agent_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;

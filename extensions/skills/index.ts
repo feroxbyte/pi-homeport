@@ -210,8 +210,9 @@ export default function claudeSkillsExtension(pi: ExtensionAPI) {
 		}
 	}
 
-	/** Expands a typed skill into pi's skill-block format, or reports why it can't run. */
-	async function typedSkill(skill: ClaudeSkill, args: string, ctx: ExtensionContext): Promise<string | undefined> {
+	/** Expands a typed skill into pi's skill-block format, or reports why it can't run. What you
+	 * typed follows the block, as in pi's own `/skill:name args`, so the transcript shows it. */
+	async function typedSkill(skill: ClaudeSkill, args: string, typed: string, ctx: ExtensionContext): Promise<string | undefined> {
 		if (!skill.userInvocable) {
 			report(ctx, `Skill ${skill.name} can only be used by the model (user-invocable: false).`, "error");
 			return undefined;
@@ -222,7 +223,7 @@ export default function claudeSkillsExtension(pi: ExtensionAPI) {
 			return undefined;
 		}
 		await applyTurnSettings(skill, ctx);
-		return `<skill name="${skill.name}" location="${skill.file}">\nReferences are relative to ${skill.dir}.\n\n${result.text.trim()}\n</skill>`;
+		return `<skill name="${skill.name}" location="${skill.file}">\nReferences are relative to ${skill.dir}.\n\n${result.text.trim()}\n</skill>\n\n${typed}`;
 	}
 
 	/** Registers Claude's names for the skills: qualified names always, the bare name when free. */
@@ -247,7 +248,7 @@ export default function claudeSkillsExtension(pi: ExtensionAPI) {
 							ctx.ui.notify(`Claude skill /${name} isn't loaded in this project.`, "warning");
 							return;
 						}
-						const block = await typedSkill(current, args.trim(), ctx);
+						const block = await typedSkill(current, args.trim(), `/${name}${args.trim() ? ` ${args.trim()}` : ""}`, ctx);
 						if (!block) return;
 						// pi starts the turn without waiting for it; stay until it has started and ended, so a
 						// non-interactive run doesn't exit mid-turn.
@@ -313,7 +314,7 @@ export default function claudeSkillsExtension(pi: ExtensionAPI) {
 		const command = pi.getCommands().find((entry) => entry.source === "skill" && entry.name === `skill:${name}`);
 		const skill = skillAt(command?.sourceInfo.path);
 		if (!skill) return { action: "continue" };
-		const block = await typedSkill(skill, args, ctx);
+		const block = await typedSkill(skill, args, event.text.trim(), ctx);
 		return block ? { action: "transform", text: block } : { action: "handled" };
 	});
 

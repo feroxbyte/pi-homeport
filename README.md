@@ -49,7 +49,7 @@ It also replaces pi's footer with one line:
   ahead or behind (`↑2 ↓1`);
 - a context bar with a mark (`┊`) where auto-compaction starts;
 - the prompt cache hit rate of the last response, and the session's cost;
-- `● working 12s · ~70 tok/s` during a turn, and `○ ready · 6s · 332 out · 94 tok/s` after it.
+- `● working 12s · ~70 tok/s` during a turn, and `○ ready · 332 out · 94 tok/s` after it.
 
 Statuses from other extensions follow when there's room. It's based on
 [pi-context-bar](https://github.com/pringled/pi-extensions/tree/main/packages/pi-context-bar). To
@@ -59,7 +59,10 @@ keep pi's footer, or another one, leave it out: `{ "source": "npm:pi-homeport", 
 It also draws the chat closer to Claude Code: each tool call is a `● Read(notes.txt)` row with
 `⎿  Read 3 lines` under it, a shell command shows its first output lines, and edits and new files
 show a highlighted diff, with ctrl+o to see everything. Your messages start with `>`, the model's
-replies with `●`, and an orange line shows what pi is doing while it works. It's based on
+replies with `●`, and an orange line shows what pi is doing while it works. A typed skill shows as
+`> /tdd fix the parser` with `⎿  Loaded skill tdd` under it; todos as a checklist; agents as
+`Done (12 tool uses · 31.2k tokens · 1m 04s)`; hidden thinking as `∴ Thought`; Esc as
+`⎿  Interrupted by user`; and compaction as one line. It's based on
 [pi-polish](https://github.com/pringled/pi-extensions/tree/main/packages/pi-polish); don't use both.
 Your messages and the model's replies are restyled through pi's internal components, so a pi update
 can change them until pi-homeport catches up. To keep pi's own look, leave it out:

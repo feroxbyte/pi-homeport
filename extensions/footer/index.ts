@@ -6,7 +6,7 @@
  *   upstream as of the last fetch;
  * - a context bar with a mark where auto-compaction starts;
  * - the prompt cache hit rate of the last response, and the session's cost;
- * - `● working 12s · ~48 tok/s` during a turn, `○ ready · 14s · 1.2k out · 52 tok/s` after it.
+ * - `● working 12s · ~48 tok/s` during a turn, `○ ready · 1.2k out · 52 tok/s` after it.
  *
  * Statuses other extensions set follow when there's room. When the window is narrow, the context
  * bar shrinks first, then segments go in `DROP_ORDER`.
@@ -225,7 +225,8 @@ function renderFooter(ctx: ExtensionContext, pi: ExtensionAPI, theme: Theme, foo
 			return theme.fg("accent", `● ${current.state} ${formatElapsed(now - current.since)}${speed}`);
 		}
 		if (!details || !lastTurn) return theme.fg("dim", "○ ready");
-		const parts = [formatElapsed(lastTurn.ms), `${formatTokens(lastTurn.output)} out`, ...(lastTurn.rate !== undefined ? [`${lastTurn.rate.toFixed(0)} tok/s`] : [])];
+		// The turn's length is in the chat's "Worked for" line, so the footer keeps to tokens and speed.
+		const parts = [`${formatTokens(lastTurn.output)} out`, ...(lastTurn.rate !== undefined ? [`${lastTurn.rate.toFixed(0)} tok/s`] : [])];
 		return theme.fg("dim", `○ ready · ${parts.join(" · ")}`);
 	};
 
