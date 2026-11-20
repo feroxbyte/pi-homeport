@@ -31,6 +31,10 @@
   "license": "MIT",
   "author": "Batuhan Demir",
   "dependencies": {
+    "@shikijs/langs": "4.5.0",
+    "@shikijs/themes": "4.5.0",
+    "diff": "9.0.0",
+    "shiki": "4.5.0",
     "yaml": "2.9.0"
   },
   "repository": {

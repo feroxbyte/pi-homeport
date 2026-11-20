@@ -56,6 +56,15 @@ Statuses from other extensions follow when there's room. It's based on
 keep pi's footer, or another one, leave it out: `{ "source": "npm:pi-homeport", "extensions":
 ["!extensions/footer/**"] }`.
 
+It also draws the chat closer to Claude Code: each tool call is a `● Read(notes.txt)` row with
+`⎿  Read 3 lines` under it, a shell command shows its first output lines, and edits and new files
+show a highlighted diff, with ctrl+o to see everything. Your messages start with `>`, the model's
+replies with `●`, and an orange line shows what pi is doing while it works. It's based on
+[pi-polish](https://github.com/pringled/pi-extensions/tree/main/packages/pi-polish); don't use both.
+Your messages and the model's replies are restyled through pi's internal components, so a pi update
+can change them until pi-homeport catches up. To keep pi's own look, leave it out:
+`"!extensions/chat/**"`.
+
 Not supported, because pi can't do it: SSE and WebSocket MCP servers, MCP prompts as commands,
 plugin options Claude keeps in your system's credential store, argument hints, Claude Code's
 built-in skills, and instructions that load when a shell command such as `cat` reads a file. Imports
