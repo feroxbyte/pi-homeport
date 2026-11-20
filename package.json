@@ -1,15 +1,16 @@
 {
-  "name": "pi-setup",
+  "name": "pi-homeport",
   "version": "0.0.0",
   "private": true,
-  "description": "My pi setup: Claude Code-style agents, skills and MCP for the pi coding agent.",
+  "description": "Use your Claude Code setup (MCP servers, skills, agents) in pi.",
   "keywords": [
     "pi-package"
   ],
   "type": "module",
   "packageManager": "pnpm@12.21.0",
   "scripts": {
-    "check": "tsc"
+    "check": "tsc",
+    "test": "node --test \"test/**/*.test.ts\""
   },
   "pi": {
     "extensions": [
@@ -33,5 +34,8 @@
     "typescript": "^7.0.2"
   },
   "license": "MIT",
-  "author": "Batuhan Demir"
+  "author": "Batuhan Demir",
+  "dependencies": {
+    "yaml": "2.9.0"
+  }
 }
