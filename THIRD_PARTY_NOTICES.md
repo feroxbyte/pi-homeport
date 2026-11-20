@@ -142,10 +142,10 @@ SOFTWARE.
 
 ## pi-code
 
-`extensions/web`, `extensions/monitor`, `extensions/rewind`, `extensions/plan` and `extensions/goal`
-are based on the web, monitor, git-checkpoint, plan-mode and goal extensions of
-[pi-code](https://github.com/ilovepixelart/pi-code). Its plan mode came from pi's plan-mode example
-by Mario Zechner.
+`extensions/web`, `extensions/monitor`, `extensions/rewind`, `extensions/plan`, `extensions/goal`
+and `extensions/context` are based on the web, monitor, git-checkpoint, plan-mode, goal and
+context-usage extensions of [pi-code](https://github.com/ilovepixelart/pi-code). Its plan mode came
+from pi's plan-mode example by Mario Zechner.
 
 ```text
 MIT License

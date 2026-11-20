@@ -143,6 +143,13 @@ check-in after `CLAUDE_CODE_GOAL_CHECKIN_MINUTES`), survives a resume, and is un
 Claude's `disableAllHooks` or `allowManagedHooksOnly` is set. `pi -p "/goal ..."` runs until the goal
 resolves. Leave it out with `"!extensions/goal/**"`.
 
+`/context` shows what fills the context window, as Claude Code's does (based on the context-usage
+extension of [pi-code](https://github.com/ilovepixelart/pi-code)): the system prompt, system and MCP
+tools, memory files, skills, messages, free space and the auto-compaction buffer, then the
+instruction and memory files that loaded, with a warning that names `/compact` when the conversation
+is over the window. The total is pi's own count, the one in the footer; the categories are estimates.
+Leave it out with `"!extensions/context/**"`.
+
 pi-homeport draws the tools of these packages the same way, and works well with them:
 [pi-subagents](https://www.npmjs.com/package/pi-subagents) for subagents,
 [pi-web-access](https://www.npmjs.com/package/pi-web-access) for more search providers, and
@@ -185,7 +192,8 @@ if it's there. If you also use pi-code, turn off the extensions that do the same
     "!extensions/monitor.ts",
     "!extensions/git-checkpoint.ts",
     "!extensions/plan-mode/**",
-    "!extensions/goal.ts"
+    "!extensions/goal.ts",
+    "!extensions/context-usage.ts"
   ]
 }
 ```
