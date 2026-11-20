@@ -23,6 +23,7 @@ import { booleanSetting, isRecord, listSetting } from "../shared/claude.ts";
 import { listField, splitFrontmatter } from "../shared/markdown.ts";
 import { activates, type ClaudeSkill, type ClaudeSkillsResult, claudeSkills } from "./discover.ts";
 import { type ExpandResult, expandSkill, readsWholeFile } from "./expand.ts";
+import { showSkillsScreen } from "./toggles.ts";
 import { bashRules, checkCommand, splitCommand, splitRules, stripWrappers } from "./permissions.ts";
 
 /** pi's thinking levels as Claude's `${CLAUDE_EFFORT}` values. */
@@ -355,11 +356,30 @@ export default function claudeSkillsExtension(pi: ExtensionAPI) {
 		return { content: [{ type: "text" as const, text: head + result.text }, ...announcement] };
 	});
 
+	pi.registerCommand("claude-plugins", {
+		description: "Turn Claude plugins on or off for this project or everywhere, in Claude Code too",
+		handler: async (_args, ctx) => {
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify("/claude-plugins needs pi's interactive mode.", "warning");
+				return;
+			}
+			if (!last) {
+				ctx.ui.notify("Claude skills: nothing loaded yet.", "info");
+				return;
+			}
+			await showSkillsScreen(ctx, { cwd: ctx.cwd, trusted: ctx.isProjectTrusted() }, last, "plugins");
+		},
+	});
+
 	pi.registerCommand("claude-skills", {
-		description: "List the skills taken from your Claude Code setup, and the ones skipped",
+		description: "Turn Claude skills on, off or name-only, and see what each one costs in context",
 		handler: async (_args, ctx) => {
 			if (!last) {
 				ctx.ui.notify("Claude skills: nothing loaded yet.", "info");
+				return;
+			}
+			if (ctx.mode === "tui") {
+				await showSkillsScreen(ctx, { cwd: ctx.cwd, trusted: ctx.isProjectTrusted() }, last, "skills");
 				return;
 			}
 			const lines = [`Handed to pi (${last.skills.length}):`];

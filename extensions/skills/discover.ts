@@ -33,7 +33,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { type ClaudeOptions, type ClaudeSetup, enabledPlugins, insidePlugin, isRecord, readClaudeSetup } from "../shared/claude.ts";
+import { type ClaudeOptions, type ClaudePlugin, type ClaudeSetup, enabledPlugins, insidePlugin, isRecord, readClaudeSetup } from "../shared/claude.ts";
 import { stringify as stringifyYaml } from "yaml";
 import { listField, matchesPaths, splitFrontmatter } from "../shared/markdown.ts";
 
@@ -246,9 +246,9 @@ function pluginCommands(root: string, declared: unknown): { file: string; name: 
 	});
 }
 
-function pluginCandidates(setup: ClaudeSetup): Candidate[] {
+function pluginCandidates(plugins: ClaudePlugin[]): Candidate[] {
 	const candidates: Candidate[] = [];
-	for (const plugin of enabledPlugins(setup)) {
+	for (const plugin of plugins) {
 		const source: SkillSource = `plugin ${plugin.id}`;
 		const info = { root: plugin.root, dataDir: plugin.dataDir, name: plugin.name };
 		const rootSkill = path.join(plugin.root, "SKILL.md");
@@ -267,8 +267,8 @@ function pluginCandidates(setup: ClaudeSetup): Candidate[] {
 	return candidates;
 }
 
-function pluginCommandCandidates(setup: ClaudeSetup): Candidate[] {
-	return enabledPlugins(setup).flatMap((plugin) =>
+function pluginCommandCandidates(plugins: ClaudePlugin[]): Candidate[] {
+	return plugins.flatMap((plugin) =>
 		pluginCommands(plugin.root, plugin.manifest.commands).map(
 			(entry): Candidate => ({
 				file: entry.file,
@@ -332,7 +332,7 @@ function syncedCandidates(personalDir: string): Candidate[] {
 /** Whether a `Skill` deny rule blocks one of a skill's names. `Skill` blocks every skill; `Skill(x)`
  * blocks the name `x`; `Skill(x *)` blocks `x` and the names in its namespace `x:…`;
  * `Skill(skill:x)` blocks the skill whatever it is called. */
-function deniedBy(rules: string[], names: string[]): string | undefined {
+export function deniedBy(rules: string[], names: string[]): string | undefined {
 	for (const rule of rules) {
 		if (rule === "Skill" || rule === "Skill(*)") return rule;
 		const match = /^Skill\((.+)\)$/.exec(rule);
@@ -360,7 +360,7 @@ export function claudeSkills(options: ClaudeSkillsOptions): ClaudeSkillsResult {
 					),
 				]
 			: []),
-		...pluginCandidates(setup),
+		...pluginCandidates(enabledPlugins(setup)),
 		...(options.commandDir
 			? [
 					...commandFilesIn(path.join(setup.configDir, "commands")).map((entry): Candidate => ({ file: entry.file, source: "personal", command: { name: entry.name } })),
@@ -369,7 +369,7 @@ export function claudeSkills(options: ClaudeSkillsOptions): ClaudeSkillsResult {
 								commandFilesIn(path.join(dir, ".claude", "commands")).map((entry): Candidate => ({ file: entry.file, source: "project", command: { name: entry.name } })),
 							)
 						: []),
-					...pluginCommandCandidates(setup),
+					...pluginCommandCandidates(enabledPlugins(setup)),
 				]
 			: []),
 		...syncedCandidates(personalDir),
@@ -524,6 +524,50 @@ export function claudeSkills(options: ClaudeSkillsOptions): ClaudeSkillsResult {
 
 	if (commandDir) pruneCommandSkills(commandDir, written);
 	return { skills, skipped, setup };
+}
+
+/** About how many tokens a skill takes in the listing pi gives the model: its name, description
+ * and location, at roughly four characters a token. */
+export function listingTokens(name: string, description: string, location: string): number {
+	return Math.ceil((name.length + description.length + location.length + 60) / 4);
+}
+
+/** A skill or command a plugin would list. */
+export interface PluginListingEntry {
+	/** The skill's own name, and Claude's `plugin:skill` name. */
+	name: string;
+	qualifiedName: string;
+	tokens: number;
+}
+
+/** The skills and commands a plugin would list, with about how many tokens each would take. */
+export function pluginListing(plugin: ClaudePlugin): PluginListingEntry[] {
+	const entries: PluginListingEntry[] = [];
+	const seen = new Set<string>();
+	for (const candidate of [...pluginCandidates([plugin]), ...pluginCommandCandidates([plugin])]) {
+		let content: string;
+		try {
+			content = candidate.command?.content ?? fs.readFileSync(candidate.file, "utf8");
+		} catch {
+			continue;
+		}
+		const { frontmatter, body } = splitFrontmatter(content);
+		const fields = { ...frontmatter, ...candidate.command?.fields };
+		const description = typeof fields.description === "string" && fields.description.trim() ? fields.description : firstLine(body);
+		if (!description) continue;
+		const whenToUse = typeof fields.when_to_use === "string" ? fields.when_to_use : "";
+		const name = candidate.command?.name ?? (typeof frontmatter.name === "string" && frontmatter.name ? frontmatter.name : path.basename(path.dirname(candidate.file)));
+		if (seen.has(name)) continue;
+		seen.add(name);
+		entries.push({ name, qualifiedName: `${plugin.name}:${name}`, tokens: listingTokens(name, `${description}\n${whenToUse}`.trim().slice(0, LISTING_LIMIT), candidate.file) });
+	}
+	return entries;
+}
+
+/** The skills and commands a plugin would list, and about how many tokens they'd take. */
+export function pluginListingCost(plugin: ClaudePlugin): { skills: number; tokens: number } {
+	const entries = pluginListing(plugin);
+	return { skills: entries.length, tokens: entries.reduce((sum, entry) => sum + entry.tokens, 0) };
 }
 
 /** Whether reading or editing `file` activates a skill: a file under a nested skill's folder, or a

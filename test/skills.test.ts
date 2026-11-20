@@ -4,10 +4,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { activates, claudeSkills } from "../extensions/skills/discover.ts";
+import { buildCatalog } from "../extensions/skills/catalog.ts";
+import { activates, claudeSkills, pluginListingCost } from "../extensions/skills/discover.ts";
+import { saveHidden, saveOverride } from "../extensions/skills/toggles.ts";
 import { DISABLED_NOTICE, type ExpandOptions, expandSkill, readsWholeFile, splitArguments } from "../extensions/skills/expand.ts";
 import { bashRules, checkCommand, matchesRule, splitCommand, splitRules, stripWrappers } from "../extensions/skills/permissions.ts";
-import { defaultManagedSettingsDir, readClaudeSetup } from "../extensions/shared/claude.ts";
+import { defaultManagedSettingsDir, installedPlugins, readClaudeSetup, updateSettingsFile } from "../extensions/shared/claude.ts";
 
 let base: string;
 let home: string;
@@ -458,5 +460,99 @@ describe("commands", () => {
 		fs.rmSync(path.join(home, ".claude", "commands", "old.md"));
 		withCommands();
 		assert.equal(fs.existsSync(first.file), false);
+	});
+});
+
+describe("plugin and skill switches", () => {
+	it("says which settings file turns each installed plugin on or off", () => {
+		installPlugin("a@m", { scope: "user" }, { ".claude-plugin/plugin.json": { name: "a" } });
+		installPlugin("b@m", { scope: "user" }, { ".claude-plugin/plugin.json": { name: "b", defaultEnabled: false } });
+		installPlugin("c@m", { scope: "user" }, { ".claude-plugin/plugin.json": { name: "c" } });
+		write(path.join(home, ".claude", "settings.json"), { enabledPlugins: { "c@m": true } });
+		write(path.join(project, ".claude", "settings.local.json"), { enabledPlugins: { "c@m": false } });
+		const setup = readClaudeSetup({ cwd: project, trusted: true, home, env: {}, managedSettingsDir: path.join(base, "managed") });
+		assert.deepEqual(
+			installedPlugins(setup).map((plugin) => [plugin.id, plugin.enabled, plugin.decidedBy]),
+			[
+				["a@m", true, "default"],
+				["b@m", false, "default"],
+				["c@m", false, "local"],
+			],
+		);
+	});
+
+	it("estimates what a plugin's skills and commands cost, on or off", () => {
+		installPlugin("p@m", { scope: "user" }, {
+			".claude-plugin/plugin.json": { name: "p" },
+			"skills/one/SKILL.md": "---\nname: one\ndescription: First skill\n---\nBody\n",
+			"commands/two.md": "Second command\n",
+		});
+		write(path.join(home, ".claude", "settings.json"), { enabledPlugins: { "p@m": false } });
+		const setup = readClaudeSetup({ cwd: project, trusted: true, home, env: {}, managedSettingsDir: path.join(base, "managed") });
+		const [plugin] = installedPlugins(setup);
+		assert.ok(plugin);
+		const cost = pluginListingCost(plugin);
+		assert.equal(cost.skills, 2);
+		assert.ok(cost.tokens > 40 && cost.tokens < 200);
+	});
+
+	it("changes one key of a settings file and keeps the rest", () => {
+		const file = path.join(project, ".claude", "settings.local.json");
+		updateSettingsFile(file, (settings) => (settings.skillOverrides = { tdd: "off" }));
+		updateSettingsFile(file, (settings) => (settings.enabledPlugins = { "p@m": false }));
+		assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { skillOverrides: { tdd: "off" }, enabledPlugins: { "p@m": false } });
+		write(file, "[1]");
+		assert.throws(() => updateSettingsFile(file, () => {}), /isn't a JSON object/);
+		assert.equal(fs.readFileSync(file, "utf8"), "[1]");
+	});
+});
+
+describe("skills screen", () => {
+	function catalog() {
+		const setup = readClaudeSetup({ cwd: project, trusted: true, home, env: {}, managedSettingsDir: path.join(base, "managed") });
+		const result = claudeSkills({ cwd: project, trusted: true, home, env: {}, managedSettingsDir: path.join(base, "managed") });
+		return buildCatalog(setup, result);
+	}
+
+	it("groups plugins by install scope and your skills apart, sorted by cost", () => {
+		installPlugin("big@m", { scope: "user" }, {
+			".claude-plugin/plugin.json": { name: "big" },
+			"skills/a/SKILL.md": `---\nname: a\ndescription: ${"long ".repeat(40)}\n---\n`,
+			"skills/b/SKILL.md": "---\nname: b\ndescription: short\n---\n",
+		});
+		installPlugin("small@m", { scope: "user" }, { ".claude-plugin/plugin.json": { name: "small" }, "skills/c/SKILL.md": "---\nname: c\ndescription: c\n---\n" });
+		installPlugin("local@m", { scope: "local", projectPath: project }, { ".claude-plugin/plugin.json": { name: "local" } });
+		skill(path.join(home, ".claude", "skills", "mine"), "mine");
+		write(path.join(home, ".claude", "settings.json"), { permissions: { deny: ["Skill(big:b)"] }, skillOverrides: { mine: "name-only" } });
+		const groups = catalog();
+		const [global, projectGroup, , yours] = groups;
+		assert.deepEqual(global?.rows.map((row) => row.label), ["big", "small"]);
+		assert.deepEqual(projectGroup?.rows.map((row) => row.label), ["local"]);
+		const big = global?.rows[0];
+		assert.ok(big?.kind === "plugin");
+		assert.deepEqual(big.skills.map((entry) => [entry.label, entry.state]), [["a", "on"], ["b", "hidden"]]);
+		assert.equal(big.tokens, big.skills[0]?.tokens, "a hidden skill costs nothing");
+		const mine = yours?.rows[0];
+		assert.ok(mine?.kind === "skill");
+		assert.equal(mine.state, "name-only");
+		assert.ok(mine.tokens < mine.fullTokens);
+	});
+
+	it("hides and shows a skill with a deny rule, and keeps other rules", () => {
+		const file = path.join(project, ".claude", "settings.local.json");
+		write(file, { permissions: { deny: ["Bash(rm *)"], allow: ["Read"] } });
+		saveHidden(file, "big:b", true);
+		saveHidden(file, "big:b", true);
+		assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).permissions, { deny: ["Bash(rm *)", "Skill(big:b)"], allow: ["Read"] });
+		saveHidden(file, "big:b", false);
+		assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).permissions, { deny: ["Bash(rm *)"], allow: ["Read"] });
+	});
+
+	it("sets and clears a skill override", () => {
+		const file = path.join(project, ".claude", "settings.local.json");
+		saveOverride(file, "tdd", "off");
+		assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { skillOverrides: { tdd: "off" } });
+		saveOverride(file, "tdd", undefined);
+		assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), {});
 	});
 });

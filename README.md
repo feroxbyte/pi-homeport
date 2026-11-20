@@ -24,7 +24,10 @@ trusts, and Claude's settings precedence.
     `allowed-tools` allow it.
   - `skillOverrides`, `Skill(...)` deny rules, `when_to_use`, `paths`, `user-invocable`, and a typed
     skill's `model`, `effort` and `disallowed-tools` are honored.
-  - `/claude-skills` lists what loaded, what didn't, and why.
+  - `/claude-skills` switches skills on, off or to name only, and shows what each one costs in
+    context. `/claude-plugins` does the same for plugins. Both write Claude Code's own settings
+    (`skillOverrides`, `enabledPlugins`), for this project in `.claude/settings.local.json` or for all
+    projects in `~/.claude/settings.json`, so Claude Code follows the change too.
 - **Custom commands** from `~/.claude/commands/`, the project's `.claude/commands/` and your plugins,
   which Claude Code runs as skills: `frontend/component.md` is `/frontend:component`, and a skill
   with the same name wins. pi loads skills only from `SKILL.md` files, so pi-homeport writes one per

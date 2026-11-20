@@ -100,6 +100,9 @@ export interface ClaudeSetup {
 	settings: Json[];
 	/** `~/.claude/settings.json`, if it exists. */
 	userSettings: Json | undefined;
+	/** The project's `.claude/settings.json` and `.claude/settings.local.json`, when trusted. */
+	projectSettings: Json | undefined;
+	localSettings: Json | undefined;
 	/** The managed settings files that exist, in merge order. */
 	managedSettings: Json[];
 	/** The folder holding Claude Code's managed files: settings, `managed-mcp.json`, skills. */
@@ -133,14 +136,52 @@ export function readClaudeSetup(options: ClaudeOptions): ClaudeSetup {
 	const managedSettings = managedSettingsFiles(managedDir)
 		.map((file) => reader.read(file))
 		.filter((file): file is Json => file !== undefined);
-	const settings = [
+	const projectSettings = options.trusted ? reader.read(path.join(root, ".claude", "settings.json")) : undefined;
+	const localSettings = options.trusted ? reader.read(localSettingsFile(root)) : undefined;
+	const settings = [userSettings, projectSettings, localSettings, ...managedSettings].filter((file): file is Json => file !== undefined);
+	return {
+		trusted: options.trusted,
+		env,
+		reader,
+		configDir,
+		claudeJson,
+		dirs,
+		root,
+		projectEntry,
+		settings,
 		userSettings,
-		...(options.trusted
-			? [reader.read(path.join(root, ".claude", "settings.json")), reader.read(path.join(root, ".claude", "settings.local.json"))]
-			: []),
-		...managedSettings,
-	].filter((file): file is Json => file !== undefined);
-	return { trusted: options.trusted, env, reader, configDir, claudeJson, dirs, root, projectEntry, settings, userSettings, managedSettings, managedDir };
+		projectSettings,
+		localSettings,
+		managedSettings,
+		managedDir,
+	};
+}
+
+/** The project's personal settings file, which isn't committed: `.claude/settings.local.json`. */
+export function localSettingsFile(root: string): string {
+	return path.join(root, ".claude", "settings.local.json");
+}
+
+/** Changes a Claude settings file in place, keeping every other key. A file that exists but isn't
+ * a JSON object is left alone and reported. */
+export function updateSettingsFile(file: string, change: (settings: Json) => void): void {
+	let settings: Json = {};
+	let raw: string | undefined;
+	try {
+		raw = fs.readFileSync(file, "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	if (raw !== undefined && raw.trim() !== "") {
+		const parsed: unknown = JSON.parse(raw);
+		if (!isRecord(parsed)) throw new Error(`${file} isn't a JSON object`);
+		settings = parsed;
+	}
+	change(settings);
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	const temporary = `${file}.${process.pid}.tmp`;
+	fs.writeFileSync(temporary, `${JSON.stringify(settings, null, 2)}\n`);
+	fs.renameSync(temporary, file);
 }
 
 /** The value of a boolean setting from the highest-precedence file that sets it. */
@@ -158,6 +199,9 @@ export function listSetting(setup: ClaudeSetup, read: (file: Json) => unknown): 
 	});
 }
 
+/** Which settings decide whether a plugin loads, from the highest precedence down. */
+export type PluginDecidedBy = "managed" | "local" | "project" | "user" | "default";
+
 export interface ClaudePlugin {
 	/** `name@marketplace`, the key in `enabledPlugins`. */
 	id: string;
@@ -167,14 +211,29 @@ export interface ClaudePlugin {
 	manifest: Json;
 	/** `${CLAUDE_PLUGIN_DATA}`. */
 	dataDir: string;
+	enabled: boolean;
+	decidedBy: PluginDecidedBy;
+	/** How it's installed: for every project (`user`), or for this project (`project`, `local`). */
+	installScope: "user" | "project" | "local";
 }
 
 /** Plugins installed for this project and enabled, as Claude Code decides both. */
 export function enabledPlugins(setup: ClaudeSetup): ClaudePlugin[] {
-	const enabled = new Map<string, boolean>();
-	for (const file of setup.settings) {
-		if (!isRecord(file.enabledPlugins)) continue;
-		for (const [id, value] of Object.entries(file.enabledPlugins)) if (typeof value === "boolean") enabled.set(id, value);
+	return installedPlugins(setup).filter((plugin) => plugin.enabled);
+}
+
+/** Plugins installed for this project, on or off, with the settings that decide which. */
+export function installedPlugins(setup: ClaudeSetup): ClaudePlugin[] {
+	const layers: [PluginDecidedBy, Json | undefined][] = [
+		["user", setup.userSettings],
+		["project", setup.projectSettings],
+		["local", setup.localSettings],
+		...setup.managedSettings.map((file): [PluginDecidedBy, Json] => ["managed", file]),
+	];
+	const enabled = new Map<string, { value: boolean; by: PluginDecidedBy }>();
+	for (const [by, file] of layers) {
+		if (!isRecord(file?.enabledPlugins)) continue;
+		for (const [id, value] of Object.entries(file.enabledPlugins)) if (typeof value === "boolean") enabled.set(id, { value, by });
 	}
 	const installed = setup.reader.read(path.join(setup.configDir, "plugins", "installed_plugins.json"));
 	const records = isRecord(installed?.plugins) ? installed.plugins : {};
@@ -191,10 +250,11 @@ export function enabledPlugins(setup: ClaudeSetup): ClaudePlugin[] {
 		if (!chosen || typeof chosen.installPath !== "string" || !fs.existsSync(chosen.installPath)) continue;
 		const root = chosen.installPath;
 		const manifest = setup.reader.read(path.join(root, ".claude-plugin", "plugin.json")) ?? {};
-		if (!(enabled.get(id) ?? manifest.defaultEnabled !== false)) continue;
+		const decision = enabled.get(id);
 		const name = typeof manifest.name === "string" && manifest.name ? manifest.name : (id.split("@")[0] ?? id);
 		const dataDir = path.join(setup.configDir, "plugins", "data", id.replace(/[^A-Za-z0-9_-]/g, "-"));
-		plugins.push({ id, name, root, manifest, dataDir });
+		const installScope = chosen.scope === "project" || chosen.scope === "local" ? chosen.scope : "user";
+		plugins.push({ id, name, root, manifest, dataDir, enabled: decision?.value ?? manifest.defaultEnabled !== false, decidedBy: decision?.by ?? "default", installScope });
 	}
 	return plugins;
 }
